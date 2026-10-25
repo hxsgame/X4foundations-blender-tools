@@ -58,7 +58,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 26),  # 导出坐标修复：位置 z 不再取反（与导入互逆、同游戏原文件）；四元数改用 rotation_quaternion，排除 Track To 约束污染
+    "version": (9, 16, 27),  # 新增 lane 自定义属性（inbound 进站道/outbound 出站道/不设置=跟随物体旋转），导出四元数由其控制：inbound=恒等、outbound=绕竖直轴180°（对齐原版 dockarea 车道朝向规律）
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -467,6 +467,10 @@ MULTI_LANGUAGE_TEXTS = {
         "WP_TAG_CAT_SIZE": "尺寸",
         "WP_TAG_CAT_SPEED": "速度",
         "WP_TAG_CAT_OTHER": "其他",
+        "WP_LANE": "车道",
+        "WP_LANE_INBOUND": "进站道",
+        "WP_LANE_OUTBOUND": "出站道",
+        "WP_LANE_MANUAL": "手动旋转",
         "WP_EXPORT_ERRORS": "导出失败：发现 {} 个错误",
         "WP_EXPORT_WARN_DOCK": "警告：没有 typedock waypoint",
         "WP_EXPORT_WARN_BLOCK": "警告：blocklink start/end 不成对（start={}, end={}）",
@@ -788,6 +792,10 @@ MULTI_LANGUAGE_TEXTS = {
         "WP_TAG_CAT_SIZE": "Size",
         "WP_TAG_CAT_SPEED": "Speed",
         "WP_TAG_CAT_OTHER": "Other",
+        "WP_LANE": "Lane",
+        "WP_LANE_INBOUND": "Inbound",
+        "WP_LANE_OUTBOUND": "Outbound",
+        "WP_LANE_MANUAL": "Manual Rot",
         "WP_EXPORT_ERRORS": "Export failed: {} error(s) found",
         "WP_EXPORT_WARN_DOCK": "Warning: no typedock waypoint",
         "WP_EXPORT_WARN_BLOCK": "Warning: blocklink start/end unpaired (start={}, end={})",
@@ -2683,6 +2691,13 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             obj["group"] = group
             # 硬点类型（waypoint / dockingbay）
             obj["hardpoint_type"] = _detect_hp_type(name, settings.wp_default_hp_type)
+            # 车道朝向：按 XML 四元数推断（原版规律：qy≈±1 绕竖直轴 180° = 出站道，qw≈±1 恒等 = 进站道）
+            qy = float(wp.get("qy", 0))
+            qw = float(wp.get("qw", 1))
+            if abs(qy) > 0.9 and abs(qw) < 0.1:
+                obj["lane"] = "outbound"
+            elif abs(qw) > 0.9:
+                obj["lane"] = "inbound"
 
             waypoint_objects[name] = obj
 
@@ -2842,6 +2857,8 @@ class COMPONENT_OT_make_waypoint(bpy.types.Operator):
                 obj["group"] = ""
             if "hardpoint_type" not in obj:
                 obj["hardpoint_type"] = "waypoint"
+            if "lane" not in obj:
+                obj["lane"] = "inbound"
             _sync_wp_tag_props(obj)
             _apply_wp_display_type(obj)
             count += 1
@@ -2879,6 +2896,28 @@ class COMPONENT_OT_toggle_waypoint_tag(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class COMPONENT_OT_set_wp_lane(bpy.types.Operator):
+    """设置当前激活 waypoint 的车道朝向（lane 属性控制导出四元数）"""
+    bl_idname = "component_fixed.set_wp_lane"
+    bl_label = "Set Waypoint Lane"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    lane: bpy.props.StringProperty()  # inbound / outbound / ""（清除=跟随物体实际旋转）
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj is None or obj.get("tags") is None:
+            self.report({'WARNING'}, t("WP_NO_SELECTED_WAYPOINT"))
+            return {'CANCELLED'}
+        if self.lane and obj.get("lane") == self.lane:
+            del obj["lane"]  # 再点一次同值 = 清除，回到手动旋转模式
+        elif self.lane:
+            obj["lane"] = self.lane
+        elif "lane" in obj:
+            del obj["lane"]
+        return {'FINISHED'}
+
+
 class COMPONENT_OT_add_waypoint(bpy.types.Operator):
     """在 3D 光标处新建一个 waypoint 空物体（带 tags/links 自定义属性）"""
     bl_idname = "component_fixed.add_waypoint"
@@ -2910,6 +2949,7 @@ class COMPONENT_OT_add_waypoint(bpy.types.Operator):
         obj["links"] = ""
         obj["group"] = group
         obj["hardpoint_type"] = "waypoint"
+        obj["lane"] = "inbound"  # 车道朝向：默认进站道（恒等），出站道导出时转 180°
         _sync_wp_tag_props(obj)
         _apply_wp_display_type(obj)
         context.scene.collection.objects.link(obj)
@@ -3047,8 +3087,14 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
         p = m.translation
         # 位置：导入 (x, z, y) 的逆映射，与游戏原文件一致（不再 z 取反）
         x, y, z = p.x, p.z, p.y
-        # 旋转：读 rotation_quaternion（Track To 约束只是可视化辅助，不参与导出；
-        # 恒等旋转经换基共轭仍是恒等，与游戏原文件 qw=±1 一致；手动旋转过的点仍正确转换）
+        # 旋转：lane 属性优先——inbound=恒等朝向，outbound=绕竖直轴 180°（原版 dockarea 车道规律：
+        # 进站道恒等、回程道 qy=±1/qw≈0，与泊位 offset 四元数互证）；
+        # 未设置 lane 时回退到物体实际旋转（rotation_quaternion，Track To 约束不参与导出）
+        lane = obj.get("lane")
+        if lane == "inbound":
+            return x, y, z, 0.0, 0.0, 0.0, 1.0
+        if lane == "outbound":
+            return x, y, z, 0.0, -1.0, 0.0, 0.0
         q = obj.rotation_quaternion
         qq = _WP_C @ q @ _WP_C_INV
         return x, y, z, qq.x, qq.y, qq.z, qq.w
@@ -3547,6 +3593,20 @@ class COMPONENT_FIXED_PT_waypoint_panel(bpy.types.Panel):
                 row.operator("component_fixed.clear_wp_links",
                              text=t("WP_CLEAR_LINKS"), icon='X')
 
+                # 车道朝向（lane 属性控制导出四元数；清除=跟随物体实际旋转）
+                row = box.row(align=True)
+                row.label(text=t("WP_LANE") + ":")
+                cur_lane = obj.get("lane")
+                op = row.operator("component_fixed.set_wp_lane", text=t("WP_LANE_INBOUND"),
+                                  depress=(cur_lane == "inbound"))
+                op.lane = "inbound"
+                op = row.operator("component_fixed.set_wp_lane", text=t("WP_LANE_OUTBOUND"),
+                                  depress=(cur_lane == "outbound"))
+                op.lane = "outbound"
+                op = row.operator("component_fixed.set_wp_lane", text=t("WP_LANE_MANUAL"),
+                                  depress=(cur_lane is None), icon='MOD_SCREW')
+                op.lane = ""
+
                 box.separator()
                 current_tags = set(str(obj.get("tags", "")).split())
                 for cat_key, tag_list in WP_TAG_CATEGORIES:
@@ -3665,6 +3725,7 @@ classes = (
     COMPONENT_OT_import_waypoints,
     COMPONENT_OT_make_waypoint,
     COMPONENT_OT_toggle_waypoint_tag,
+    COMPONENT_OT_set_wp_lane,
     COMPONENT_OT_add_waypoint,
     COMPONENT_OT_apply_wp_group,
     COMPONENT_OT_add_links_from_selection,
