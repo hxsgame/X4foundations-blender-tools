@@ -58,7 +58,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 27),  # 新增 lane 自定义属性（inbound 进站道/outbound 出站道/不设置=跟随物体旋转），导出四元数由其控制：inbound=恒等、outbound=绕竖直轴180°（对齐原版 dockarea 车道朝向规律）
+    "version": (9, 16, 29),  # 导出数字清理：浮点残渣吸附（|v|<1e-6 写 0）+ 四元数符号规范化（qw<0 整体取反，q/-q 同一旋转）
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3101,6 +3101,10 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
             return x, y, z, 0.0, -1.0, 0.0, 0.0
         q = obj.rotation_quaternion
         qq = _WP_C @ q @ _WP_C_INV
+        # 四元数符号规范化：q 与 -q 是同一旋转（双覆盖），统一 qw >= 0 写法
+        #（原版进站道写 qw=-1 是异号残渣，导出统一为 qw=+1，语义相同）
+        if qq.w < 0:
+            qq.negate()
         return x, y, z, qq.x, qq.y, qq.z, qq.w
 
     @staticmethod
