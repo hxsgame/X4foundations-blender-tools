@@ -58,7 +58,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 25),  # 面板顶部连接符设置加 LINKED 图标和"编辑器通用"备注行（导入/新建/应用组名/导出共用）
+    "version": (9, 16, 26),  # 导出坐标修复：位置 z 不再取反（与导入互逆、同游戏原文件）；四元数改用 rotation_quaternion，排除 Track To 约束污染
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3045,8 +3045,11 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
     def _convert(obj):
         m = obj.matrix_world
         p = m.translation
-        q = m.to_quaternion()
-        x, y, z = p.x, p.z, -p.y
+        # 位置：导入 (x, z, y) 的逆映射，与游戏原文件一致（不再 z 取反）
+        x, y, z = p.x, p.z, p.y
+        # 旋转：读 rotation_quaternion（Track To 约束只是可视化辅助，不参与导出；
+        # 恒等旋转经换基共轭仍是恒等，与游戏原文件 qw=±1 一致；手动旋转过的点仍正确转换）
+        q = obj.rotation_quaternion
         qq = _WP_C @ q @ _WP_C_INV
         return x, y, z, qq.x, qq.y, qq.z, qq.w
 
