@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 release/
 X4Foundations_Blender_Tools_v*.zip
+backup_to_D.ps1
+维护日志.md
