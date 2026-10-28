@@ -58,7 +58,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 29),  # 导出数字清理：浮点残渣吸附（|v|<1e-6 写 0）+ 四元数符号规范化（qw<0 整体取反，q/-q 同一旋转）
+    "version": (9, 16, 42),  # 整理场景：场景根集合按 Mesh/Collisions/Hulls/Waypoints/Lights/Connections 排序
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -221,6 +221,7 @@ MULTI_LANGUAGE_TEXTS = {
         "NAME_SEPARATOR_DESC": "组名与名称之间的连接符号",
         "NAME_KEY": "组件key",
         "NAME_KEY_DESC": "标识本工具放置的硬点，插在链接符与名称之间；膨胀/收缩以它识别硬点，XML 补全工具剥离它后再做类型匹配",
+        "NAME_KEY_NOTE": "膨胀/收缩、XML补全等功能按此 key 识别硬点",
         "ERROR_COMP_KEY_EMPTY": "组件key为空，膨胀/收缩无法识别硬点；请在组件名称区填写组件key（默认 up7con_）",
         "MAINTAIN_PROPS": "维护硬点属性",
         "MAINTAIN_FILTER": "筛选文本",
@@ -229,17 +230,24 @@ MULTI_LANGUAGE_TEXTS = {
         "MAINTAIN_PROPS_DESC": "按当前 组件预设/组件尺寸/朝向 设置，为选中的空物体添加（缺失）或更新（已有）尺寸与朝向自定义属性",
         "ERROR_NO_SELECTION": "请先选中要维护的空物体硬点",
         "INFO_MAINTAINED": "维护完成：新增 {} 个、更新 {} 个、跳过非空物体 {} 个",
+        "ORGANIZE_SCENE": "整理场景",
+        "ORGANIZE_SCENE_DESC": "把场景中带组件类型的硬点空物体按类型归入 Connections 集合层级（Engines/Turrets/Shields/Docks…，炮塔按组名建子集合），不动父子与变换",
+        "ERROR_NO_HARDPOINTS_ORG": "场景中没有带 x4_comp_name 的硬点空物体可整理",
+        "INFO_ORGANIZED": "已整理 {} 个硬点到 {} 个集合",
         "PREVIEW_TITLE": "预览实体化",
         "PREVIEW_SHOW": "实体化预览",
         "PREVIEW_SHOW_DESC": "按自定义属性记录的组件 xyz 尺寸，为选中的空物体创建同位线框长方体预览（父级跟随移动，不修改空物体本身）",
         "PREVIEW_HIDE": "去除实体化",
         "PREVIEW_HIDE_DESC": "移除选中空物体（或直接选中的预览体）的预览；不选任何物体时清理场景中全部预览体",
-        "INFO_PREVIEW_CREATED": "预览创建 {} 个（已有跳过 {} 个，无尺寸属性 {} 个）",
+        "INFO_PREVIEW_CREATED": "预览新建 {} 个（已刷新 {} 个，无尺寸属性 {} 个）",
         "INFO_PREVIEW_REMOVED": "已移除预览 {} 个",
         "ERROR_NO_PREVIEW": "场景中没有可移除的预览体",
         "INFLATE_TITLE": "膨胀/收缩",
+        "INFLATE_SCOPE": "绑定范围",
+        "INFLATE_SCOPE_ALL": "关联全部组件",
+        "INFLATE_SCOPE_SELECTED": "关联选定组件",
         "INFLATE_PARENT": "建立父子绑定",
-        "INFLATE_PARENT_DESC": "将名称含组件key的全部空物体硬点父子绑定到当前选中的舰船（保持世界位置不变），随后缩放舰船即可实时预览硬点跟随",
+        "INFLATE_PARENT_DESC": "将选中的名称含组件key的硬点空物体父子绑定到当前选中的舰船（保持世界位置不变），随后缩放舰船即可实时预览硬点跟随",
         "INFLATE_APPLY_MOVE": "应用·仅位移",
         "INFLATE_APPLY_FULL": "应用·位移+缩放",
         "INFLATE_APPLY_FULL_DESC": "解除父子并保留缩放（硬点变换完整跟随舰船，含缩放）",
@@ -546,6 +554,7 @@ MULTI_LANGUAGE_TEXTS = {
         "NAME_SEPARATOR_DESC": "Symbol between group name and the name part",
         "NAME_KEY": "Component Key",
         "NAME_KEY_DESC": "Marks hardpoints placed by this tool, inserted between separator and name; inflate/shrink uses it to find hardpoints, the XML tool strips it before type matching",
+        "NAME_KEY_NOTE": "Inflate/Shrink and XML tools identify hardpoints by this key",
         "ERROR_COMP_KEY_EMPTY": "Component key is empty, inflate/shrink cannot find hardpoints; fill the key in the name section (default up7con_)",
         "MAINTAIN_PROPS": "Maintain Hardpoint Props",
         "MAINTAIN_FILTER": "Filter Text",
@@ -554,17 +563,24 @@ MULTI_LANGUAGE_TEXTS = {
         "MAINTAIN_PROPS_DESC": "Add (missing) or update (existing) size and orientation custom properties on selected empties, from current preset/size/orientation settings",
         "ERROR_NO_SELECTION": "Select hardpoint empties to maintain first",
         "INFO_MAINTAINED": "Maintained: {} added, {} updated, {} non-empties skipped",
+        "ORGANIZE_SCENE": "Organize Scene",
+        "ORGANIZE_SCENE_DESC": "Group hardpoint empties by component type into a Connections collection hierarchy (Engines/Turrets/Shields/Docks…, turrets get sub-collections by group). Does not touch parent or transforms.",
+        "ERROR_NO_HARDPOINTS_ORG": "No hardpoint empties with x4_comp_name found in the scene",
+        "INFO_ORGANIZED": "Organized {} hardpoints into {} collections",
         "PREVIEW_TITLE": "Solidify Preview",
         "PREVIEW_SHOW": "Solidify Preview",
         "PREVIEW_SHOW_DESC": "Create a co-located wireframe box for selected empties from recorded xyz size (parents follow movement; empties untouched)",
         "PREVIEW_HIDE": "Remove Solidify",
         "PREVIEW_HIDE_DESC": "Remove previews of selected empties (or selected preview boxes); with nothing selected, clean all previews in the scene",
-        "INFO_PREVIEW_CREATED": "Created {} previews ({} skipped as existing, {} without size property)",
+        "INFO_PREVIEW_CREATED": "Created {} previews ({} refreshed, {} without size property)",
         "INFO_PREVIEW_REMOVED": "Removed {} previews",
         "ERROR_NO_PREVIEW": "No preview boxes to remove in the scene",
         "INFLATE_TITLE": "Inflate/Shrink",
+        "INFLATE_SCOPE": "Parenting Scope",
+        "INFLATE_SCOPE_ALL": "All Matching Components",
+        "INFLATE_SCOPE_SELECTED": "Selected Components Only",
         "INFLATE_PARENT": "Parent to Ship",
-        "INFLATE_PARENT_DESC": "Parent all hardpoint empties whose name contains the component key to the selected ship (world positions kept); then scale the ship to preview hardpoints following live",
+        "INFLATE_PARENT_DESC": "Parent selected hardpoint empties whose name contains the component key to the selected ship (world positions kept); then scale the ship to preview hardpoints following live",
         "INFLATE_APPLY_MOVE": "Apply · Move Only",
         "INFLATE_APPLY_FULL": "Apply · Move + Scale",
         "INFLATE_APPLY_FULL_DESC": "Unparent and keep scale (hardpoint transforms fully follow the ship, including scale)",
@@ -1008,6 +1024,16 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         default=_DEFAULT_COMP_KEY,
         update=_update_name_parts,
         description=t("NAME_KEY_DESC")
+    )
+
+    inflate_scope: bpy.props.EnumProperty(
+        name=t("INFLATE_SCOPE"),
+        items=[
+            ('ALL', t("INFLATE_SCOPE_ALL"), "Parent every hardpoint empty whose name contains the component key"),
+            ('SELECTED', t("INFLATE_SCOPE_SELECTED"), "Parent only the selected hardpoint empties"),
+        ],
+        default='ALL',
+        description="Scope of hardpoints to parent when clicking 建立父子绑定",
     )
 
     name_base: bpy.props.StringProperty(
@@ -1842,7 +1868,12 @@ class COMPONENT_OT_placer(bpy.types.Operator):
         empty_obj.location = position
         empty_obj.rotation_euler = rotation
 
-        context.scene.collection.objects.link(empty_obj)
+        # 若已执行过"整理场景"，自动归入对应 Connections 集合（按类型+组名）；否则放场景根集合
+        target_col_name = _resolve_organize_collection(settings.name_base, settings.name_group)
+        if target_col_name and target_col_name in bpy.data.collections:
+            bpy.data.collections[target_col_name].objects.link(empty_obj)
+        else:
+            context.scene.collection.objects.link(empty_obj)
 
         # 存储局部轴的世界方向信息用于平移（与旋转矩阵列向量一致）
         empty_obj["face_normal"] = tuple(axis_data[2])
@@ -2043,6 +2074,7 @@ class COMPONENT_OT_mirror_x(bpy.types.Operator):
         from mathutils import Quaternion
 
         scene = context.scene
+        settings = scene.component_settings_fixed
         translation_settings = scene.component_translation_fixed
         find_text = translation_settings.replace_find.strip()
         replace_text = translation_settings.replace_with
@@ -2085,14 +2117,21 @@ class COMPONENT_OT_mirror_x(bpy.types.Operator):
             # 继承轴常显标记（旧版硬点无此标记时默认开启）
             new_obj["x4_axis_show"] = obj.get("x4_axis_show", True)
             # 轴向与尺寸自定义属性随镜像继承
-            for _key in ("x4_axis_normal", "x4_axis_forward", "x4_axis_up", "x4_comp_size"):
+            for _key in ("x4_axis_normal", "x4_axis_forward", "x4_axis_up", "x4_comp_size", "x4_comp_name"):
                 if _key in obj:
                     new_obj[_key] = obj[_key]
             new_obj.location = loc
             new_obj.rotation_mode = 'QUATERNION'  # 四元数镜像结果直接写入，避免欧拉转换误差
             new_obj.rotation_quaternion = mirrored_q
 
-            scene.collection.objects.link(new_obj)
+            # 若已执行过"整理场景"，镜像副本自动归入对应 Connections 集合
+            mirror_comp_type = str(new_obj.get("x4_comp_name", ""))
+            mirror_group = _org_extract_group(mirror_name, settings.name_separator, settings.name_key)
+            target_col_name = _resolve_organize_collection(mirror_comp_type, mirror_group)
+            if target_col_name and target_col_name in bpy.data.collections:
+                bpy.data.collections[target_col_name].objects.link(new_obj)
+            else:
+                scene.collection.objects.link(new_obj)
 
             # 存储轴向数据（镜像后重新计算的世界方向）
             new_obj["face_normal"] = tuple(rot_matrix.col[2])
@@ -2261,9 +2300,16 @@ class COMPONENT_OT_inflate_parent(bpy.types.Operator):
 
         parented = 0
         parent_inv = ship.matrix_world.inverted()
-        for obj in context.scene.objects:
-            if obj.type != 'EMPTY' or comp_key not in obj.name:
-                continue
+        scope = getattr(context.scene.component_settings_fixed, "inflate_scope", 'ALL')
+        if scope == 'SELECTED':
+            # 仅处理选中的硬点（排除舰船本身）
+            candidates = [o for o in context.selected_objects
+                          if o != ship and o.type == 'EMPTY' and comp_key in o.name]
+        else:
+            # 关联全部：场景中所有名称含组件key的空物体硬点
+            candidates = [o for o in context.scene.objects
+                          if o.type == 'EMPTY' and comp_key in o.name]
+        for obj in candidates:
             if obj.parent is ship:
                 continue  # 已绑定，防重复
             # 世界 = parent @ parent_inverse @ basis；parent_inverse = ship⁻¹
@@ -2330,7 +2376,19 @@ _preview_cube_mesh = None  # 共享 2×2×2 立方体网格缓存（所有预览
 def _get_preview_cube_mesh():
     """获取（或创建）共享的 2×2×2 立方体网格，预览体通过缩放得到目标尺寸"""
     global _preview_cube_mesh
-    if _preview_cube_mesh is None or _preview_cube_mesh.users == 0:
+    _need_rebuild = False
+    if _preview_cube_mesh is None:
+        _need_rebuild = True
+    else:
+        try:
+            # 底层 Mesh 可能已被 Blender 销毁（文件重载/删除数据块/清理孤儿），
+            # 此时 Python 包装器仍指向死亡的 StructRNA，访问 .users 会抛 ReferenceError
+            if _preview_cube_mesh.users == 0:
+                _need_rebuild = True
+        except ReferenceError:
+            _preview_cube_mesh = None
+            _need_rebuild = True
+    if _need_rebuild:
         import bmesh
         bm = bmesh.new()
         bmesh.ops.create_cube(bm, size=2.0)
@@ -2352,7 +2410,7 @@ class COMPONENT_OT_preview_show(bpy.types.Operator):
             return {'CANCELLED'}
 
         created = 0
-        skipped = 0
+        refreshed = 0
         no_size = 0
         mesh = _get_preview_cube_mesh()
         for obj in context.selected_objects:
@@ -2362,13 +2420,30 @@ class COMPONENT_OT_preview_show(bpy.types.Operator):
             if not size:
                 no_size += 1  # 老硬点先用"维护硬点属性"补齐尺寸记录
                 continue
-            # 已有预览则跳过，避免重复堆积
-            if any(o.get(_PREVIEW_OF_PROP) == obj.name for o in context.scene.objects):
-                skipped += 1
-                continue
-            preview = bpy.data.objects.new(obj.name + "_预览", mesh)
-            preview.parent = obj  # 父级跟随：空物体平移/旋转时预览同步
-            preview.matrix_parent_inverse = Matrix.Identity(4)
+            # 已有预览则复用并刷新尺寸/位置；没有则新建——避免"改了尺寸还得先去除再预览"的重复操作
+            preview = next((o for o in context.scene.objects if o.get(_PREVIEW_OF_PROP) == obj.name), None)
+            if preview is not None:
+                # 防止父级被手动改过或重名导致归属错位，重新绑定父级
+                if preview.parent != obj:
+                    preview.parent = obj
+                    preview.matrix_parent_inverse = Matrix.Identity(4)
+                # 预览体引用的 mesh 可能已被 Blender 销毁（文件重载/清理孤儿），重新绑定有效 mesh
+                _data_ok = False
+                try:
+                    if preview.data is not None and preview.data.users > 0:
+                        _data_ok = True
+                except ReferenceError:
+                    pass
+                if not _data_ok:
+                    preview.data = mesh
+                refreshed += 1
+            else:
+                preview = bpy.data.objects.new(obj.name + "_预览", mesh)
+                preview.parent = obj  # 父级跟随：空物体平移/旋转时预览同步
+                preview.matrix_parent_inverse = Matrix.Identity(4)
+                preview[_PREVIEW_OF_PROP] = obj.name  # 反查归属，供去除实体化定位
+                context.collection.objects.link(preview)
+                created += 1
             _comp_name = str(obj.get("x4_comp_name", "")).lower()
             _size = list(size)
             # 护盾（shield）特例：预设尺寸按 (长, 厚, 高) 记在 xyz，实体长轴应沿局部 Y（+Y 同向），
@@ -2391,11 +2466,8 @@ class COMPONENT_OT_preview_show(bpy.types.Operator):
             preview.location = _loc
             preview.display_type = 'BOUNDS'  # 线框包围盒，不遮挡模型
             preview.hide_render = True  # 预览体不参与渲染/导出
-            preview[_PREVIEW_OF_PROP] = obj.name  # 反查归属，供去除实体化定位
-            context.collection.objects.link(preview)
-            created += 1
 
-        self.report({'INFO'}, t("INFO_PREVIEW_CREATED", created, skipped, no_size))
+        self.report({'INFO'}, t("INFO_PREVIEW_CREATED", created, refreshed, no_size))
         return {'FINISHED'}
 
 
@@ -2514,6 +2586,292 @@ class COMPONENT_OT_maintain_props_filtered(bpy.types.Operator):
             return {'CANCELLED'}
 
         self.report({'INFO'}, t("INFO_MAINTAINED", added, updated, skipped))
+        return {'FINISHED'}
+
+
+# ============================ 场景整理（Connections 集合层级） ============================
+
+# x4_comp_name 前缀 → 目标集合名（顺序即 Connections 下的排列顺序）
+_ORGANIZE_TYPE_MAP = [
+    ("engine",          "Engines"),
+    ("thruster",        "Thrusters"),
+    ("shield",          "Shields"),
+    ("weapon",          "Weapons"),
+    ("turret",          "Turrets"),
+    ("dockarea",        "Dockareas"),
+    ("launchtube",      "Launchtubes"),
+    ("room",            "Rooms"),
+    ("countermeasures", "Countermeasures"),
+    ("trailemitter",    "Trailemitters"),
+    # 以下归入 Empties 下的类型子集合（元组形式：(父集合, 子集合)）
+    ("bridge",          ("Empties", "cockpit")),
+    ("cockpit",         ("Empties", "cockpit")),
+    ("playercontrol",   ("Empties", "playercontrol")),
+    ("storage",         ("Empties", "storage")),
+    ("dock_",           ("Empties", "docks")),
+    ("shipstorage",     ("Empties", "shipstorage")),
+    ("container",       ("Empties", "container")),
+    ("space",           ("Empties", "space")),
+    ("buildmodule",     ("Empties", "buildmodule")),
+]
+# 场景根集合（Scene Collection）下的集合排列顺序
+_ORGANIZE_ROOT_ORDER = [
+    "Mesh", "Collisions", "Hulls", "Waypoints", "Lights", "Connections",
+]
+# Connections 下的集合排列顺序
+_ORGANIZE_COL_ORDER = [
+    "Groups", "Engines", "Thrusters", "Shields", "Weapons", "Turrets",
+    "Dockareas", "Launchtubes", "Rooms", "Countermeasures",
+    "Trailemitters", "Empties",
+]
+# Empties 下预创建的类型子集合（按约定顺序排列，不按字母序）
+_ORGANIZE_EMPTIES_SUBS = [
+    "cockpit", "playercontrol", "storage", "docks",
+    "shipstorage", "buildmodule", "container", "space",
+]
+
+
+def _org_get_or_create_collection(name, parent=None):
+    """获取或新建集合并挂到 parent（默认场景根集合）下。"""
+    if name in bpy.data.collections:
+        col = bpy.data.collections[name]
+    else:
+        col = bpy.data.collections.new(name)
+    root = parent or bpy.context.scene.collection
+    if col.name not in root.children.keys():
+        root.children.link(col)
+    return col
+
+
+def _org_sort_children_alphabetically(parent_col):
+    """把 parent_col 下的所有子集合按名称升序重排。"""
+    children = sorted(parent_col.children.keys(), key=lambda n: n.lower())
+    for child_name in children:
+        if child_name in parent_col.children.keys():
+            col = parent_col.children[child_name]
+            parent_col.children.unlink(col)
+            parent_col.children.link(col)
+
+
+def _org_move_to_collection(obj, col_name):
+    """把 obj 从当前所有集合移出，放进 col_name。"""
+    target = bpy.data.collections.get(col_name)
+    if target is None:
+        return
+    if obj.name in target.objects:
+        return
+    for col in list(obj.users_collection):
+        col.objects.unlink(obj)
+    target.objects.link(obj)
+
+
+def _org_infer_comp_type(obj, settings):
+    """推断硬点的组件类型字符串（小写），优先 x4_comp_name，回退从名称解析。"""
+    comp_name = obj.get("x4_comp_name")
+    if comp_name:
+        return str(comp_name).lower()
+    # 回退：从物体名解析（组-链接符-key-名称-NNN），去掉 key 与尾部序号
+    name = obj.name
+    key = settings.name_key or ""
+    if key and key in name:
+        import re
+        after = name.split(key, 1)[1]
+        after = re.sub(r'-\d+$', '', after)
+        return after.lower()
+    return name.lower()
+
+
+def _org_type_to_collection(comp_type):
+    """按组件类型返回 (父集合名, 子集合名或None)。
+    顶层类型（如 Engines）返回 ("Engines", None)；
+    Empties 子类型（如 bridge）返回 ("Empties", "cockpit")；
+    未命中返回 None。"""
+    ct = comp_type.lower() if isinstance(comp_type, str) else ""
+    for prefix, target in _ORGANIZE_TYPE_MAP:
+        if ct.startswith(prefix):
+            if isinstance(target, tuple):
+                return target
+            return (target, None)
+    return None
+
+
+def _org_extract_group(name, separator, key):
+    """从物体名提取组名。命名约定：[group][sep][key][base]-[NNN]
+    找到 [sep][key] 标记则取其前的部分为组名；找不到（名称以 key 开头）则无组名。"""
+    import re
+    base = re.sub(r'-\d+$', '', name)
+    marker = (separator or "-") + (key or "")
+    if marker and marker in base:
+        idx = base.find(marker)
+        return base[:idx] if idx > 0 else ""
+    return ""
+
+
+def _resolve_organize_collection(comp_type, group_name=""):
+    """若 Connections 下已存在对应集合，返回该集合名用于放置时自动归入；否则返回 None。
+
+    新分组规则：
+    - 有组名 → Connections/Groups/{组名}（不分组件种类）
+    - 无组名 → Connections/{type}/{sub} 或 Connections/Empties/{sub}
+    """
+    connections = bpy.data.collections.get("Connections")
+    if connections is None:
+        return None
+    # 有组名优先找 Groups/{组名}
+    if group_name:
+        groups_col = connections.children.get("Groups")
+        if groups_col and group_name in groups_col.children:
+            return groups_col.children[group_name].name
+        return None
+    # 无组名 → 按类型查找
+    target = _org_type_to_collection(comp_type)
+    if target is None:
+        empties_col = connections.children.get("Empties")
+        if empties_col and comp_type and comp_type in empties_col.children:
+            return empties_col.children[comp_type].name
+        return None
+    parent_name, sub_name = target
+    parent_col = connections.children.get(parent_name)
+    if parent_col is None:
+        return None
+    if sub_name:
+        sub_col = parent_col.children.get(sub_name)
+        if sub_col is None:
+            return parent_col.name
+        return sub_col.name
+    return parent_col.name
+
+
+def _org_sort_children_by_order(parent_col, order_list):
+    """按 order_list 的顺序重排 parent_col 下的子集合（不在列表中的追加到末尾）。"""
+    existing = list(parent_col.children.keys())
+    ordered = [n for n in order_list if n in existing]
+    rest = [n for n in existing if n not in order_list]
+    for child_name in (ordered + rest):
+        if child_name in parent_col.children.keys():
+            col = parent_col.children[child_name]
+            parent_col.children.unlink(col)
+            parent_col.children.link(col)
+
+
+class COMPONENT_OT_organize_scene(bpy.types.Operator):
+    """按组名/组件类型把场景硬点空物体归入 Connections 集合层级。有组名→Groups/{组名}（不分类型）；无组名→按类型分（Engines/Turrets/...，Empties 按类型子集合）。不动父子与变换。"""
+    bl_idname = "component_fixed.organize_scene"
+    bl_label = t("ORGANIZE_SCENE")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        settings = context.scene.component_settings_fixed
+        separator = settings.name_separator or "-"
+        key = settings.name_key or ""
+        scene = context.scene
+
+        connections_col = _org_get_or_create_collection("Connections")
+
+        # 两阶段：只处理场景根集合（scene.collection）里的物体，已在子集合里的不碰
+        # （避免覆盖 ego 工具放入 Hulls 等集合的物体分类）
+        scene_col = scene.collection
+        root_objs = list(scene_col.objects)
+        hardpoints = []   # 空物体硬点
+        meshes = []       # 网格物体 → Mesh / Collisions
+        lights = []       # 灯光 → Lights
+        for o in root_objs:
+            # 排除航点（有 hardpoint_type）和预览体（有 x4_preview_of 或名称含"预览"）
+            if o.get("hardpoint_type"):
+                continue
+            if o.get("x4_preview_of") or "预览" in o.name:
+                continue
+            if o.type == 'EMPTY':
+                hardpoints.append(o)
+            elif o.type == 'MESH':
+                meshes.append(o)
+            elif o.type == 'LIGHT':
+                lights.append(o)
+
+        if not (hardpoints or meshes or lights):
+            self.report({'WARNING'}, t("ERROR_NO_HARDPOINTS_ORG"))
+            return {'CANCELLED'}
+
+        # 预建顶层集合：Mesh / Collisions / Lights / Waypoints / Hulls
+        _org_get_or_create_collection("Mesh")
+        _org_get_or_create_collection("Collisions")
+        _org_get_or_create_collection("Lights")
+
+        # 预建 Groups、Empties 及其已知类型子集合（按约定顺序）
+        groups_col = _org_get_or_create_collection("Groups", parent=connections_col)
+        empties_col = _org_get_or_create_collection("Empties", parent=connections_col)
+        for sub_name in _ORGANIZE_EMPTIES_SUBS:
+            _org_get_or_create_collection(sub_name, parent=empties_col)
+
+        moved = 0
+        used_cols = set()
+
+        # —— 空物体硬点：有组名→Groups/{组名}；无组名→按类型分 ——
+        for obj in hardpoints:
+            comp_type = _org_infer_comp_type(obj, settings)
+            group = _org_extract_group(obj.name, separator, key)
+
+            if group:
+                grp_col = _org_get_or_create_collection(group, parent=groups_col)
+                _org_move_to_collection(obj, grp_col.name)
+                used_cols.add("Groups")
+                used_cols.add(group)
+            else:
+                target = _org_type_to_collection(comp_type)
+                if target is not None:
+                    parent_name, sub_name = target
+                    parent_col = _org_get_or_create_collection(parent_name, parent=connections_col)
+                    used_cols.add(parent_name)
+                    if sub_name:
+                        sub_col = _org_get_or_create_collection(sub_name, parent=parent_col)
+                        used_cols.add(sub_name)
+                        _org_move_to_collection(obj, sub_col.name)
+                    else:
+                        _org_move_to_collection(obj, parent_col.name)
+                else:
+                    type_sub = comp_type if comp_type else "unknown"
+                    sub_col = _org_get_or_create_collection(type_sub, parent=empties_col)
+                    _org_move_to_collection(obj, sub_col.name)
+                    used_cols.add(type_sub)
+                    used_cols.add("Empties")
+            moved += 1
+
+        # —— 网格物体：含 collision → Collisions；否则 → Mesh ——
+        for obj in meshes:
+            name_l = obj.name.lower()
+            if "collision" in name_l:
+                target_name = "Collisions"
+            else:
+                target_name = "Mesh"
+            _org_move_to_collection(obj, target_name)
+            used_cols.add(target_name)
+            moved += 1
+
+        # —— 灯光 → Lights ——
+        for obj in lights:
+            _org_move_to_collection(obj, "Lights")
+            used_cols.add("Lights")
+            moved += 1
+
+        # 场景根集合排序：Mesh / Collisions / Hulls / Waypoints / Lights / Connections
+        _org_sort_children_by_order(scene.collection, _ORGANIZE_ROOT_ORDER)
+
+        # 按 _ORGANIZE_COL_ORDER 重排 Connections 下的子集合
+        for col_name in reversed(_ORGANIZE_COL_ORDER):
+            if col_name in connections_col.children.keys():
+                col = connections_col.children[col_name]
+                connections_col.children.unlink(col)
+                connections_col.children.link(col)
+
+        # 子集合排序：Groups 按字母序；Empties 按约定顺序；其余类型集合按字母序
+        _org_sort_children_alphabetically(groups_col)
+        _org_sort_children_by_order(empties_col, _ORGANIZE_EMPTIES_SUBS)
+        for col_name in connections_col.children.keys():
+            if col_name not in ("Groups", "Empties"):
+                sub_parent = connections_col.children[col_name]
+                _org_sort_children_alphabetically(sub_parent)
+
+        self.report({'INFO'}, t("INFO_ORGANIZED", moved, len(used_cols)))
         return {'FINISHED'}
 
 
@@ -3312,6 +3670,19 @@ class COMPONENT_FIXED_PT_placer_panel(bpy.types.Panel):
         settings = scene.component_settings_fixed
         translation_settings = scene.component_translation_fixed
 
+        # ========== 面板级通用设置：组件key（膨胀/收缩、XML补全等功能按此识别硬点，航路编辑器连接符同位置） ==========
+        row = layout.row(align=True)
+        row.label(text="", icon='KEYINGSET')  # 组件key图标
+        row.prop(settings, "name_key", text=t("NAME_KEY"))
+        layout.label(text=t("NAME_KEY_NOTE"), icon='INFO')
+        layout.separator(factor=1.7)
+
+        # ========== 场景整理：按组件类型归入 Connections 集合层级（放面板最前面，先建层级再放置） ==========
+        box = layout.box()
+        box.label(text=t("ORGANIZE_SCENE"), icon='OUTLINER_COLLECTION')
+        box.operator("component_fixed.organize_scene", text=t("ORGANIZE_SCENE"), icon='OUTLINER_COLLECTION')
+        layout.separator(factor=1.7)
+
         box = layout.box()
         box.label(text=t("BASIC_SETTINGS"), icon='SETTINGS')
 
@@ -3324,10 +3695,9 @@ class COMPONENT_FIXED_PT_placer_panel(bpy.types.Panel):
         box.operator("component_fixed.apply_selected_name",
                      text=t("APPLY_SELECTED_NAME"), icon='EYEDROPPER')
 
-        # 组件名称四栏：组名 + 链接符号 + 组件key + 名称，放置时拼接为完整组件名称
+        # 组件名称三栏：组名 + 链接符号 + 名称，放置时拼接为完整组件名称（组件key已移至面板顶部统一设置）
         box.prop(settings, "name_group", text=t("NAME_GROUP"))
         box.prop(settings, "name_separator", text=t("NAME_SEPARATOR"))
-        box.prop(settings, "name_key", text=t("NAME_KEY"))
         box.prop(settings, "name_base", text=t("COMP_NAME"))
         box.prop(settings, "comp_size", text=t("COMP_SIZE"))
 
@@ -3492,6 +3862,7 @@ class COMPONENT_FIXED_PT_placer_panel(bpy.types.Panel):
         layout.separator(factor=1.7)
         box = layout.box()
         box.label(text=t("INFLATE_TITLE"), icon='FULLSCREEN_ENTER')
+        box.prop(settings, "inflate_scope", text=t("INFLATE_SCOPE"), expand=True)
         box.operator("component_fixed.inflate_parent", text=t("INFLATE_PARENT"), icon='LINKED')
         box.operator("component_fixed.inflate_apply", text=t("INFLATE_APPLY_MOVE"), icon='CHECKMARK').keep_scale = False
         box.operator("component_fixed.inflate_apply", text=t("INFLATE_APPLY_FULL"), icon='FULLSCREEN_ENTER').keep_scale = True
@@ -3729,6 +4100,7 @@ classes = (
     COMPONENT_OT_preview_hide,
     COMPONENT_OT_maintain_props,
     COMPONENT_OT_maintain_props_filtered,
+    COMPONENT_OT_organize_scene,
     COMPONENT_OT_apply_selected_name,
     COMPONENT_OT_import_waypoints,
     COMPONENT_OT_make_waypoint,
