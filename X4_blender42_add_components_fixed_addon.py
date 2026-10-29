@@ -58,7 +58,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 42),  # 整理场景：场景根集合按 Mesh/Collisions/Hulls/Waypoints/Lights/Connections 排序
+    "version": (9, 16, 48),  # 曲线路径模式位置改回直线等距（同平面模式），仅法线用附近面插值调整朝向
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -234,6 +234,32 @@ MULTI_LANGUAGE_TEXTS = {
         "ORGANIZE_SCENE_DESC": "把场景中带组件类型的硬点空物体按类型归入 Connections 集合层级（Engines/Turrets/Shields/Docks…，炮塔按组名建子集合），不动父子与变换",
         "ERROR_NO_HARDPOINTS_ORG": "场景中没有带 x4_comp_name 的硬点空物体可整理",
         "INFO_ORGANIZED": "已整理 {} 个硬点到 {} 个集合",
+        "SHIP_MESH_ORGANIZE": "整理舰船网格",
+        "SHIP_MESH_ORGANIZE_DESC": "将选中的 EVE 舰船网格整理为 X4 命名规范：重命名为 part_main，UV→uv1，复制出 collision/LOD1-3/wreck，支持按比例减面",
+        "SHIP_MESH_PREFIX": "材质前缀",
+        "SHIP_MESH_PREFIX_DESC": "材质名称前缀，留空则无前缀",
+        "SHIP_MESH_MAT_NAME": "材质名称",
+        "SHIP_MESH_MAT_NAME_DESC": "主体材质基础名，自动补后缀 _a/_b/_c…（应用于 part_main 与 LOD1-3）",
+        "SHIP_MESH_WRECK_MAT": "Wreck 材质名",
+        "SHIP_MESH_WRECK_MAT_DESC": "wreck 网格使用的材质名称（清空原有材质后新建并应用）",
+        "SHIP_MESH_LOD_MODE": "LOD 生成方式",
+        "SHIP_MESH_LOD_MODE_DESC": "LOD1/2/3 的生成方式：直接复制或按比例减面",
+        "SHIP_MESH_WRECK_MODE": "Wreck 生成方式",
+        "SHIP_MESH_WRECK_MODE_DESC": "wreck 的生成方式：直接复制或按比例减面",
+        "SHIP_MESH_MODE_COPY": "复制",
+        "SHIP_MESH_MODE_COPY_DESC": "直接复制原网格（面数不变）",
+        "SHIP_MESH_MODE_DECIMATE": "按比例减面",
+        "SHIP_MESH_MODE_DECIMATE_DESC": "用 Decimate 修改器按比例减少面数",
+        "SHIP_MESH_LOD1_RATIO": "LOD1 减面比例",
+        "SHIP_MESH_LOD2_RATIO": "LOD2 减面比例",
+        "SHIP_MESH_LOD3_RATIO": "LOD3 减面比例",
+        "SHIP_MESH_WRECK_RATIO": "Wreck 减面比例",
+        "SHIP_MESH_LOD_RATIO_DESC": "保留面数比例（0.01~1.0），仅在「按比例减面」模式下生效",
+        "SHIP_MESH_CREATE_COLLISION": "生成 Collision",
+        "SHIP_MESH_CREATE_COLLISION_DESC": "勾选时额外生成 part_main.collision（不附材质），默认不生成",
+        "ERROR_NO_MESH": "场景中未找到网格物体，请先选中或导入一个 MESH",
+        "ERROR_ALREADY_ORGANIZED": "该网格已整理过（含 x4_ship_mesh_organized 标记），已跳过。如需重新整理请先删除该自定义属性。",
+        "INFO_SHIP_MESH_DONE": "舰船网格整理完成，已生成 {} 个衍生物体",
         "PREVIEW_TITLE": "预览实体化",
         "PREVIEW_SHOW": "实体化预览",
         "PREVIEW_SHOW_DESC": "按自定义属性记录的组件 xyz 尺寸，为选中的空物体创建同位线框长方体预览（父级跟随移动，不修改空物体本身）",
@@ -274,7 +300,23 @@ MULTI_LANGUAGE_TEXTS = {
         "AUTO_COUNT_DESC": "根据面范围自动计算组件数量",
 
         "MANUAL_COUNT": "手动数量",
-        "MANUAL_COUNT_DESC": "手动设置组件数量",
+        "MANUAL_COUNT_DESC": "手动设置组件数量（最多50）",
+
+        # 曲面放置模式
+        "SURFACE_MODE": "贴合模式",
+        "SURFACE_MODE_DESC": "多物体排列时如何贴合选中曲面",
+        "SURFACE_MODE_PLANE": "平面（平均法线）",
+        "SURFACE_MODE_PLANE_DESC": "把选中面当作一个平面，所有组件同朝向直线排列",
+        "SURFACE_MODE_FACE_CENTER": "面中心（逐面法线）",
+        "SURFACE_MODE_FACE_CENTER_DESC": "沿排列轴选 N 个面，每个组件放在面中心并用该面法线朝向",
+        "SURFACE_MODE_CURVE_PATH": "曲线路径（法线插值）",
+        "SURFACE_MODE_CURVE_PATH_DESC": "沿曲面采样 N 个点，法线插值周围面，更平滑贴合曲面",
+        "FORWARD_MODE": "朝向参考",
+        "FORWARD_MODE_DESC": "组件朝向轴的参考方向",
+        "FORWARD_MODE_SETTING": "朝向设置（世界Y+）",
+        "FORWARD_MODE_SETTING_DESC": "用朝向轴设置，参考世界前向(Y+)",
+        "FORWARD_MODE_ARRANGE": "沿排列方向",
+        "FORWARD_MODE_ARRANGE_DESC": "组件朝向轴对齐排列方向（排队朝向一致）",
 
         # 偏移设置
         "SURFACE_OFFSET": "表面偏移",
@@ -567,6 +609,32 @@ MULTI_LANGUAGE_TEXTS = {
         "ORGANIZE_SCENE_DESC": "Group hardpoint empties by component type into a Connections collection hierarchy (Engines/Turrets/Shields/Docks…, turrets get sub-collections by group). Does not touch parent or transforms.",
         "ERROR_NO_HARDPOINTS_ORG": "No hardpoint empties with x4_comp_name found in the scene",
         "INFO_ORGANIZED": "Organized {} hardpoints into {} collections",
+        "SHIP_MESH_ORGANIZE": "Organize Ship Mesh",
+        "SHIP_MESH_ORGANIZE_DESC": "Convert selected EVE ship mesh to X4 naming: rename to part_main, UV→uv1, spawn collision/LOD1-3/wreck, optional decimate",
+        "SHIP_MESH_PREFIX": "Material Prefix",
+        "SHIP_MESH_PREFIX_DESC": "Prefix for material names; leave empty for no prefix",
+        "SHIP_MESH_MAT_NAME": "Material Name",
+        "SHIP_MESH_MAT_NAME_DESC": "Base material name; auto-suffixed _a/_b/_c… (applied to part_main and LOD1-3)",
+        "SHIP_MESH_WRECK_MAT": "Wreck Material",
+        "SHIP_MESH_WRECK_MAT_DESC": "Material name for the wreck mesh (clears original materials, creates and applies this one)",
+        "SHIP_MESH_LOD_MODE": "LOD Mode",
+        "SHIP_MESH_LOD_MODE_DESC": "How LOD1/2/3 are generated: copy or proportional decimate",
+        "SHIP_MESH_WRECK_MODE": "Wreck Mode",
+        "SHIP_MESH_WRECK_MODE_DESC": "How wreck is generated: copy or proportional decimate",
+        "SHIP_MESH_MODE_COPY": "Copy",
+        "SHIP_MESH_MODE_COPY_DESC": "Copy the original mesh (unchanged face count)",
+        "SHIP_MESH_MODE_DECIMATE": "Decimate",
+        "SHIP_MESH_MODE_DECIMATE_DESC": "Reduce face count proportionally with the Decimate modifier",
+        "SHIP_MESH_LOD1_RATIO": "LOD1 Ratio",
+        "SHIP_MESH_LOD2_RATIO": "LOD2 Ratio",
+        "SHIP_MESH_LOD3_RATIO": "LOD3 Ratio",
+        "SHIP_MESH_WRECK_RATIO": "Wreck Ratio",
+        "SHIP_MESH_LOD_RATIO_DESC": "Ratio of faces to keep (0.01~1.0), only used in Decimate mode",
+        "SHIP_MESH_CREATE_COLLISION": "Create Collision",
+        "SHIP_MESH_CREATE_COLLISION_DESC": "Also generate part_main.collision (no material) when checked. Off by default.",
+        "ERROR_NO_MESH": "No mesh object found. Select or import a MESH first.",
+        "ERROR_ALREADY_ORGANIZED": "This mesh was already organized (x4_ship_mesh_organized flag set). Skipped. Remove the custom property to re-organize.",
+        "INFO_SHIP_MESH_DONE": "Ship mesh organized, {} derivative objects created",
         "PREVIEW_TITLE": "Solidify Preview",
         "PREVIEW_SHOW": "Solidify Preview",
         "PREVIEW_SHOW_DESC": "Create a co-located wireframe box for selected empties from recorded xyz size (parents follow movement; empties untouched)",
@@ -607,7 +675,23 @@ MULTI_LANGUAGE_TEXTS = {
         "AUTO_COUNT_DESC": "Automatically calculate component count based on face area",
 
         "MANUAL_COUNT": "Manual Count",
-        "MANUAL_COUNT_DESC": "Manually set component count",
+        "MANUAL_COUNT_DESC": "Manually set component count (max 50)",
+
+        # 曲面放置模式
+        "SURFACE_MODE": "Surface Mode",
+        "SURFACE_MODE_DESC": "How multi-placement conforms to selected surface",
+        "SURFACE_MODE_PLANE": "Plane (avg normal)",
+        "SURFACE_MODE_PLANE_DESC": "Treat selected faces as one plane; all components share orientation in a straight line",
+        "SURFACE_MODE_FACE_CENTER": "Face Center (per-face normal)",
+        "SURFACE_MODE_FACE_CENTER_DESC": "Pick N faces along arrange axis; each component sits on a face center using that face's normal",
+        "SURFACE_MODE_CURVE_PATH": "Curve Path (normal interpolation)",
+        "SURFACE_MODE_CURVE_PATH_DESC": "Sample N points along the surface; normals interpolated from nearby faces for smoother conformance",
+        "FORWARD_MODE": "Forward Ref",
+        "FORWARD_MODE_DESC": "Reference direction for the forward axis",
+        "FORWARD_MODE_SETTING": "Forward Setting (World Y+)",
+        "FORWARD_MODE_SETTING_DESC": "Use forward axis setting, reference world forward (Y+)",
+        "FORWARD_MODE_ARRANGE": "Along Arrange Direction",
+        "FORWARD_MODE_ARRANGE_DESC": "Forward axis aligns with arrange direction (components face the same way in line)",
 
         # 偏移设置
         "SURFACE_OFFSET": "Surface Offset",
@@ -1195,8 +1279,29 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         name=t("MANUAL_COUNT"),
         default=DEFAULT_VALUES["MANUAL_COUNT"],
         min=2,
-        max=20,
+        max=50,
         description=t("MANUAL_COUNT_DESC")
+    )
+
+    placement_surface_mode: bpy.props.EnumProperty(
+        name=t("SURFACE_MODE"),
+        items=[
+            ('PLANE', t("SURFACE_MODE_PLANE"), t("SURFACE_MODE_PLANE_DESC")),
+            ('CURVE_PATH', t("SURFACE_MODE_CURVE_PATH"), t("SURFACE_MODE_CURVE_PATH_DESC")),
+            ('FACE_CENTER', t("SURFACE_MODE_FACE_CENTER"), t("SURFACE_MODE_FACE_CENTER_DESC")),
+        ],
+        default='PLANE',
+        description=t("SURFACE_MODE_DESC")
+    )
+
+    placement_forward_mode: bpy.props.EnumProperty(
+        name=t("FORWARD_MODE"),
+        items=[
+            ('SETTING', t("FORWARD_MODE_SETTING"), t("FORWARD_MODE_SETTING_DESC")),
+            ('ARRANGE', t("FORWARD_MODE_ARRANGE"), t("FORWARD_MODE_ARRANGE_DESC")),
+        ],
+        default='SETTING',
+        description=t("FORWARD_MODE_DESC")
     )
 
     surface_offset: bpy.props.FloatProperty(
@@ -1282,6 +1387,75 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
             print(f"预设应用错误: {e}")
         finally:
             self._applying_preset = False
+
+    # ===== 整理舰船网格（EVE→X4 命名规范） =====
+    ship_mesh_prefix: bpy.props.StringProperty(
+        name=t("SHIP_MESH_PREFIX"),
+        default="",
+        description=t("SHIP_MESH_PREFIX_DESC")
+    )
+
+    ship_mesh_mat_name: bpy.props.StringProperty(
+        name=t("SHIP_MESH_MAT_NAME"),
+        default="evemate",
+        description=t("SHIP_MESH_MAT_NAME_DESC")
+    )
+
+    ship_mesh_wreck_mat: bpy.props.StringProperty(
+        name=t("SHIP_MESH_WRECK_MAT"),
+        default="p2generic.gen_p2_wreck_01",
+        description=t("SHIP_MESH_WRECK_MAT_DESC")
+    )
+
+    ship_mesh_lod_mode: bpy.props.EnumProperty(
+        name=t("SHIP_MESH_LOD_MODE"),
+        items=[
+            ('COPY', t("SHIP_MESH_MODE_COPY"), t("SHIP_MESH_MODE_COPY_DESC")),
+            ('DECIMATE', t("SHIP_MESH_MODE_DECIMATE"), t("SHIP_MESH_MODE_DECIMATE_DESC")),
+        ],
+        default='COPY',
+        description=t("SHIP_MESH_LOD_MODE_DESC")
+    )
+
+    ship_mesh_lod1_ratio: bpy.props.FloatProperty(
+        name=t("SHIP_MESH_LOD1_RATIO"),
+        default=0.6, min=0.01, max=1.0,
+        description=t("SHIP_MESH_LOD_RATIO_DESC")
+    )
+
+    ship_mesh_lod2_ratio: bpy.props.FloatProperty(
+        name=t("SHIP_MESH_LOD2_RATIO"),
+        default=0.3, min=0.01, max=1.0,
+        description=t("SHIP_MESH_LOD_RATIO_DESC")
+    )
+
+    ship_mesh_lod3_ratio: bpy.props.FloatProperty(
+        name=t("SHIP_MESH_LOD3_RATIO"),
+        default=0.1, min=0.01, max=1.0,
+        description=t("SHIP_MESH_LOD_RATIO_DESC")
+    )
+
+    ship_mesh_wreck_mode: bpy.props.EnumProperty(
+        name=t("SHIP_MESH_WRECK_MODE"),
+        items=[
+            ('COPY', t("SHIP_MESH_MODE_COPY"), t("SHIP_MESH_MODE_COPY_DESC")),
+            ('DECIMATE', t("SHIP_MESH_MODE_DECIMATE"), t("SHIP_MESH_MODE_DECIMATE_DESC")),
+        ],
+        default='COPY',
+        description=t("SHIP_MESH_WRECK_MODE_DESC")
+    )
+
+    ship_mesh_wreck_ratio: bpy.props.FloatProperty(
+        name=t("SHIP_MESH_WRECK_RATIO"),
+        default=0.5, min=0.01, max=1.0,
+        description=t("SHIP_MESH_LOD_RATIO_DESC")
+    )
+
+    ship_mesh_create_collision: bpy.props.BoolProperty(
+        name=t("SHIP_MESH_CREATE_COLLISION"),
+        default=False,
+        description=t("SHIP_MESH_CREATE_COLLISION_DESC")
+    )
 
 
 class TranslationSettingsFixed(bpy.types.PropertyGroup):
@@ -1570,25 +1744,44 @@ def calculate_improved_long_edge_direction(obj, face_normal, bm):
 
 def get_selected_faces_data(obj, bm):
     """获取选中面的几何数据
-    bm 由调用方传入（编辑模式 bmesh 归 Blender 所有，此处只读，不 free）"""
+    bm 由调用方传入（编辑模式 bmesh 归 Blender 所有，此处只读，不 free）
+    返回 dict：center(平均中心世界坐标), normal(平均法线世界坐标), face_count,
+               faces=[{'center':世界中心, 'normal':世界法线, 'area':面积}, ...]"""
     selected_faces = [face for face in bm.faces if face.select]
 
     if not selected_faces:
         return None
 
+    matrix_world = obj.matrix_world
+    normal_matrix = matrix_world.to_3x3().inverted_safe().transposed()
+
     # 计算加权中心点和法线
     total_area = 0.0
     weighted_center = Vector()
     weighted_normal = Vector()
+    face_list = []
 
     for face in selected_faces:
         area = face.calc_area()
-        face_center = face.calc_center_median()
-        face_normal = face.normal
+        face_center_local = face.calc_center_median()
+        face_normal_local = face.normal
+
+        # 转换为世界坐标
+        face_center_world = matrix_world @ face_center_local
+        face_normal_world = normal_matrix @ face_normal_local
+        if face_normal_world.length < 1e-6:
+            face_normal_world = matrix_world.to_3x3() @ face_normal_local
+        face_normal_world = face_normal_world.normalized()
 
         total_area += area
-        weighted_center += face_center * area
-        weighted_normal += face_normal * area
+        weighted_center += face_center_local * area
+        weighted_normal += face_normal_local * area
+
+        face_list.append({
+            'center': face_center_world,
+            'normal': face_normal_world,
+            'area': area,
+        })
 
     if total_area > 0:
         avg_center_local = weighted_center / total_area
@@ -1607,20 +1800,17 @@ def get_selected_faces_data(obj, bm):
         avg_normal_local = avg_normal_local.normalized()
 
     # 转换为世界坐标：点用完整矩阵；法线用逆转置矩阵（兼容非均匀缩放）
-    matrix_world = obj.matrix_world
     avg_center_world = matrix_world @ avg_center_local
-
-    normal_matrix = matrix_world.to_3x3().inverted_safe().transposed()
     avg_normal_world = normal_matrix @ avg_normal_local
     if avg_normal_world.length < 1e-6:
-        # 奇异矩阵回退：直接用线性部分变换
         avg_normal_world = matrix_world.to_3x3() @ avg_normal_local
     avg_normal_world = avg_normal_world.normalized()
 
     return {
         'center': avg_center_world,
         'normal': avg_normal_world,
-        'face_count': len(selected_faces)
+        'face_count': len(selected_faces),
+        'faces': face_list,
     }
 
 class COMPONENT_OT_placer(bpy.types.Operator):
@@ -1654,15 +1844,14 @@ class COMPONENT_OT_placer(bpy.types.Operator):
             if settings.placement_mode == 'MULTI' and settings.arrange_direction == 'LONG_EDGE':
                 bbox_data = calculate_improved_long_edge_direction(obj, face_data['normal'], bm)
 
-            # 计算旋转矩阵
-            rotation, axis_data = self.calculate_rotation_matrix(face_data, settings)
-
-            # 计算位置数据
+            # 计算位置 + 每个位置的法线列表
             if settings.placement_mode == 'SINGLE':
                 positions = [self.calculate_single_position(face_data, settings)]
+                normals = [face_data['normal']]
                 count = 1
+                arrange_axis = None
             else:
-                positions, count = self.calculate_multiple_positions(
+                positions, normals, count, arrange_axis = self.calculate_multiple_positions(
                     face_data, settings, obj, bm, bbox_data)
 
         except Exception as e:
@@ -1673,9 +1862,9 @@ class COMPONENT_OT_placer(bpy.types.Operator):
         bpy.ops.object.mode_set(mode='OBJECT')
 
         try:
-            # 创建组件对象
+            # 创建组件对象（每个组件用自己的法线+旋转）
             component_objs = self._create_components(
-                context, face_data['normal'], positions, rotation, axis_data, settings)
+                context, positions, normals, arrange_axis, settings)
         except Exception as e:
             self.report({'ERROR'}, t("ERROR_OBJECT_CREATION", str(e)))
             return {'CANCELLED'}
@@ -1686,11 +1875,15 @@ class COMPONENT_OT_placer(bpy.types.Operator):
 
         return {'FINISHED'}
 
-    def _create_components(self, context, normal, positions, rotation, axis_data, settings):
-        """创建全部组件空物体"""
-        # 法向抬升使用与法线对齐的那根局部轴对应的尺寸
+    def _create_components(self, context, positions, normals, arrange_axis, settings):
+        """创建全部组件空物体（每个组件用自己的法线计算旋转与抬升）"""
         size_index = {'X': 0, 'Y': 1, 'Z': 2}[settings.align_axis[0]]
-        normal_offset = normal * (settings.comp_size[size_index] / 2 + settings.surface_offset)
+        half_size = settings.comp_size[size_index] / 2
+
+        # 朝向参考方向：SETTING 用世界Y+，ARRANGE 用排列方向
+        forward_ref = None
+        if settings.placement_forward_mode == 'ARRANGE' and arrange_axis is not None:
+            forward_ref = arrange_axis.normalized()
 
         # 获取基础名称（剥离自动序号后缀）
         base_name = strip_sequence_suffix(settings.comp_name)
@@ -1699,8 +1892,13 @@ class COMPONENT_OT_placer(bpy.types.Operator):
         next_sequence = get_next_available_sequence(base_name, context.scene)
 
         component_objs = []
-        for i, base_pos in enumerate(positions):
-            position = base_pos + normal_offset
+        for i, (base_pos, normal) in enumerate(zip(positions, normals)):
+            normal = normal.normalized()
+            # 法向抬升：组件半高 + 表面偏移
+            position = base_pos + normal * (half_size + settings.surface_offset)
+
+            # 为每个组件单独计算旋转矩阵
+            rotation, axis_data = self.calculate_rotation_matrix(normal, settings, forward_ref)
 
             # 生成唯一名称：基础名称-三位序号
             obj_name = f"{base_name}-{next_sequence + i:03d}"
@@ -1711,16 +1909,16 @@ class COMPONENT_OT_placer(bpy.types.Operator):
 
         return component_objs
 
-    def calculate_rotation_matrix(self, face_data, settings):
+    def calculate_rotation_matrix(self, normal, settings, forward_ref=None):
         """计算旋转矩阵
         X4 坐标系约定：世界 Y+ 为前向，世界 Z+ 为上向。
         - align_axis（法向轴）：指定哪根局部轴对齐面法线（'X'/'Y'/'Z' 正向沿法线外，'-' 反向）
         - forward_axis（朝向轴）：指定哪根局部轴对齐世界前向(Y+)在面平面上的投影；
-          选项字母仅决定局部轴，参考方向恒为世界 Y+
+          选项字母仅决定局部轴，参考方向恒为世界 Y+（forward_ref 可覆盖为自定义方向，如排列方向）
         - up_axis（向上轴）：仅当朝向轴与法向轴同字母时生效，指定哪根局部轴对齐
           世界上向(Z+)在面平面上的投影
         三根局部轴按右手系 (X×Y=Z) 构造，保证 det=+1"""
-        normal = face_data['normal'].normalized()
+        normal = normal.normalized()
         align = settings.align_axis
         align_letter = align[0]
         align_sign = -1 if align.endswith('-') else 1
@@ -1729,7 +1927,7 @@ class COMPONENT_OT_placer(bpy.types.Operator):
         fwd_sign = 1 if fwd.endswith('+') else -1
 
         # X4 固定参考方向：前向 = 世界 Y+，上向 = 世界 Z+
-        FORWARD_WORLD = Vector((0, 1, 0))
+        FORWARD_WORLD = forward_ref if forward_ref is not None else Vector((0, 1, 0))
         UP_WORLD = Vector((0, 0, 1))
 
         # 朝向轴与法向轴为同一轴时：向上轴生效，由向上轴定义面内第二根轴；
@@ -1807,43 +2005,126 @@ class COMPONENT_OT_placer(bpy.types.Operator):
         return position
 
     def calculate_multiple_positions(self, face_data, settings, obj, bm, bbox_data=None):
-        """计算多物体排列位置"""
+        """计算多物体排列位置
+        返回 (positions, normals, count, arrange_axis)
+        - positions: 每个组件的世界坐标位置
+        - normals: 每个组件对应的面法线（用于各自计算旋转与抬升）
+        - count: 组件数量
+        - arrange_axis: 排列方向（供朝向模式 ARRANGE 使用）"""
         normal = face_data['normal']
+        surface_mode = settings.placement_surface_mode
 
+        # 排列轴：平面模式投影到面平面；曲面模式（面中心/曲线路径）直接用世界轴，不投影
         if settings.arrange_direction == 'X':
-            arrange_axis = self._project_to_plane(Vector((1, 0, 0)), normal, Vector((0, 1, 0)))
+            world_axis = Vector((1, 0, 0))
+            arrange_axis = (self._project_to_plane(world_axis, normal, Vector((0, 1, 0)))
+                            if surface_mode == 'PLANE' else world_axis.copy())
         elif settings.arrange_direction == 'Y':
-            arrange_axis = self._project_to_plane(Vector((0, 1, 0)), normal, Vector((1, 0, 0)))
-        else:
+            world_axis = Vector((0, 1, 0))
+            arrange_axis = (self._project_to_plane(world_axis, normal, Vector((1, 0, 0)))
+                            if surface_mode == 'PLANE' else world_axis.copy())
+        else:  # LONG_EDGE
             if bbox_data is not None:
                 arrange_axis = bbox_data
             else:
-                # 回退到X轴方向
-                arrange_axis = self._project_to_plane(Vector((1, 0, 0)), normal, Vector((0, 1, 0)))
+                world_axis = Vector((1, 0, 0))
+                arrange_axis = (self._project_to_plane(world_axis, normal, Vector((0, 1, 0)))
+                                if surface_mode == 'PLANE' else world_axis.copy())
 
         arrange_axis.normalize()
 
-        # 计算组件数量：auto_count 时按面沿排列轴的跨度 / 间距自动推导
+        # 计算组件数量
         if settings.auto_count:
             span = self._get_face_span_on_axis(obj, arrange_axis, bm)
             if span > 0:
                 count = int(span / max(settings.spacing, 0.5)) + 1
             else:
                 count = settings.manual_count
-            count = max(2, min(count, 20))  # 收敛到面板允许的范围
+            count = max(2, min(count, 50))
         else:
             count = settings.manual_count
 
-        # 计算排列
-        total_length = (count - 1) * settings.spacing
-        start_pos = face_data['center'] - arrange_axis * (total_length / 2)
+        surface_mode = settings.placement_surface_mode
 
+        if surface_mode == 'PLANE':
+            # 平面模式：在平均平面上直线排列，共用平均法线
+            total_length = (count - 1) * settings.spacing
+            start_pos = face_data['center'] - arrange_axis * (total_length / 2)
+            positions = [start_pos + arrange_axis * (i * settings.spacing) for i in range(count)]
+            normals = [face_data['normal']] * count
+            return positions, normals, count, arrange_axis
+
+        elif surface_mode == 'FACE_CENTER':
+            # 面中心模式：沿排列轴方向选 N 个面，每个组件放在面中心，用该面法线
+            return self._positions_face_center(face_data, count, arrange_axis)
+
+        else:  # CURVE_PATH
+            # 曲线路径模式：位置沿排列轴等距直线分布（同平面模式），法线用附近面加权插值
+            return self._positions_curve_path(face_data, count, arrange_axis, settings.spacing)
+
+    def _positions_face_center(self, face_data, count, arrange_axis):
+        """面中心模式：把选中面按排列轴投影排序，等距选 count 个面"""
+        faces = face_data['faces']
+        if not faces:
+            return [], [], 0, arrange_axis
+
+        # 按面中心在排列轴上的投影排序
+        sorted_faces = sorted(faces, key=lambda f: f['center'].dot(arrange_axis))
+
+        n = len(sorted_faces)
         positions = []
-        for i in range(count):
-            position = start_pos + arrange_axis * (i * settings.spacing)
-            positions.append(position)
+        normals = []
 
-        return positions, count
+        if count >= n:
+            # 面数不够，每个面放一个，多余的重复最后一个面
+            for f in sorted_faces:
+                positions.append(f['center'])
+                normals.append(f['normal'])
+            # 不足的用最后一个面填充
+            last = sorted_faces[-1]
+            while len(positions) < count:
+                positions.append(last['center'])
+                normals.append(last['normal'])
+        else:
+            # 等距采样：在 [0, n-1] 区间取 count 个点
+            for i in range(count):
+                idx = int(round(i * (n - 1) / max(count - 1, 1)))
+                f = sorted_faces[idx]
+                positions.append(f['center'])
+                normals.append(f['normal'])
+
+        return positions, normals, count, arrange_axis
+
+    def _positions_curve_path(self, face_data, count, arrange_axis, spacing):
+        """曲线路径模式：位置沿排列轴等距直线分布（与平面模式一致），
+        每个位置点的法线用附近面按距离加权插值（只调朝向，不改位置）"""
+        faces = face_data['faces']
+        if not faces:
+            return [], [], 0, arrange_axis
+
+        center = face_data['center']
+        # 位置：沿排列轴等距直线分布（与平面模式完全一致）
+        total_length = (count - 1) * spacing
+        start_pos = center - arrange_axis * (total_length / 2)
+        positions = [start_pos + arrange_axis * (i * spacing) for i in range(count)]
+
+        # 法线：每个位置点用附近面的法线按距离平方反比加权插值
+        normals = []
+        for pos in positions:
+            normal = Vector()
+            wsum = 0.0
+            for f in faces:
+                dist = (pos - f['center']).length
+                w = 1.0 / max(dist * dist, 1e-8)  # 平方反比，近处面权重更大
+                normal += f['normal'] * w
+                wsum += w
+            if wsum > 0:
+                normal = (normal / wsum).normalized()
+            else:
+                normal = face_data['normal']
+            normals.append(normal)
+
+        return positions, normals, count, arrange_axis
 
     def create_component_object(self, context, name, position, rotation, axis_data, settings):
         """创建组件对象"""
@@ -2875,6 +3156,118 @@ class COMPONENT_OT_organize_scene(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _shipmesh_decimate(obj, ratio):
+    """为物体添加 Decimate(COLLAPSE) 修改器并应用，ratio 为保留面数比例。"""
+    mod = obj.modifiers.new(name="Decimate", type='DECIMATE')
+    mod.decimate_type = 'COLLAPSE'
+    mod.ratio = ratio
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+
+
+class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
+    """将选中的 EVE 舰船网格整理为 X4 命名规范：重命名为 part_main，UV 层→uv1，材质按 {前缀}{材质名}_a/b/c 重命名，复制出 collision / LOD1 / LOD2 / LOD3 / wreck，LOD 与 wreck 可选按比例减面。"""
+    bl_idname = "component_fixed.organize_ship_mesh"
+    bl_label = t("SHIP_MESH_ORGANIZE")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    _SHIP_MESH_TAG = "x4_ship_mesh_organized"
+
+    def invoke(self, context, event):
+        # 破坏性操作，每次都要求确认
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        settings = context.scene.component_settings_fixed
+        prefix = settings.ship_mesh_prefix.strip()
+        mat_base = settings.ship_mesh_mat_name.strip() or "evemate"
+        wreck_mat_name = settings.ship_mesh_wreck_mat.strip() or "p2generic.gen_p2_wreck_01"
+        lod_mode = settings.ship_mesh_lod_mode
+        wreck_mode = settings.ship_mesh_wreck_mode
+
+        # 1. 获取原始网格物体：优先选中，否则场景第一个 MESH
+        original_obj = context.active_object
+        if not original_obj or original_obj.type != 'MESH':
+            original_obj = next((o for o in context.scene.objects if o.type == 'MESH'), None)
+        if not original_obj:
+            self.report({'WARNING'}, t("ERROR_NO_MESH"))
+            return {'CANCELLED'}
+
+        # 0. 检测是否已整理过（避免重复整理破坏数据）
+        if original_obj.get(self._SHIP_MESH_TAG):
+            self.report({'WARNING'}, t("ERROR_ALREADY_ORGANIZED"))
+            return {'CANCELLED'}
+
+        # 2. UV 层：第一个改名为 uv1，没有则新建
+        mesh = original_obj.data
+        if len(mesh.uv_layers) > 0:
+            mesh.uv_layers[0].name = "uv1"
+        else:
+            mesh.uv_layers.new(name="uv1")
+
+        # 3. 重命名为 part_main
+        original_obj.name = "part_main"
+        original_obj.data.name = "part_main"
+
+        # 4. 重命名 part_main 的材质：{prefix}{mat_base}_a / _b / _c ...
+        part_main_materials = []
+        for i, mat in enumerate(original_obj.data.materials):
+            if mat is None:
+                continue
+            mat.name = f"{prefix}{mat_base}_{chr(ord('a') + i)}"
+            part_main_materials.append(mat)
+
+        col = context.collection
+        created = []
+
+        # 5. 复制衍生物体
+        targets = [
+            ("part_main.LOD1", lod_mode, settings.ship_mesh_lod1_ratio, part_main_materials),
+            ("part_main.LOD2", lod_mode, settings.ship_mesh_lod2_ratio, part_main_materials),
+            ("part_main.LOD3", lod_mode, settings.ship_mesh_lod3_ratio, part_main_materials),
+            ("part_main.wreck", wreck_mode, settings.ship_mesh_wreck_ratio, None),  # wreck：单独材质
+        ]
+
+        # collision 可选（默认不创建），不附材质
+        if settings.ship_mesh_create_collision:
+            targets.insert(0, ("part_main.collision", None, None, None))
+
+        for name, mode, ratio, mats in targets:
+            new_obj = original_obj.copy()
+            new_obj.data = original_obj.data.copy()
+            new_obj.name = name
+            new_obj.data.name = name
+            col.objects.link(new_obj)
+
+            # 材质处理
+            if name == "part_main.collision":
+                # collision 不附材质，清空原有材质槽
+                new_obj.data.materials.clear()
+            elif name == "part_main.wreck":
+                w_mat = bpy.data.materials.new(name=wreck_mat_name)
+                new_obj.data.materials.clear()
+                new_obj.data.materials.append(w_mat)
+            else:
+                # LOD：复用 part_main 材质
+                new_obj.data.materials.clear()
+                for m in mats:
+                    new_obj.data.materials.append(m)
+
+            # 减面
+            if mode == 'DECIMATE' and ratio is not None:
+                _shipmesh_decimate(new_obj, ratio)
+
+            # 标记已整理
+            new_obj[self._SHIP_MESH_TAG] = True
+            created.append(name)
+
+        # 标记原始物体已整理
+        original_obj[self._SHIP_MESH_TAG] = True
+
+        self.report({'INFO'}, t("INFO_SHIP_MESH_DONE", len(created)))
+        return {'FINISHED'}
+
+
 class COMPONENT_OT_apply_selected_name(bpy.types.Operator):
     """将选中组件的名称解构回填到组名/组件名称栏"""
     bl_idname = "component_fixed.apply_selected_name"
@@ -3683,6 +4076,29 @@ class COMPONENT_FIXED_PT_placer_panel(bpy.types.Panel):
         box.operator("component_fixed.organize_scene", text=t("ORGANIZE_SCENE"), icon='OUTLINER_COLLECTION')
         layout.separator(factor=1.7)
 
+        # ========== 整理舰船网格：EVE 网格 → X4 命名规范（part_main + collision/LOD1-3/wreck） ==========
+        box = layout.box()
+        box.label(text=t("SHIP_MESH_ORGANIZE"), icon='MESH_DATA')
+        box.prop(settings, "ship_mesh_prefix")
+        box.prop(settings, "ship_mesh_mat_name")
+        box.prop(settings, "ship_mesh_wreck_mat")
+
+        box.separator()
+        box.prop(settings, "ship_mesh_create_collision")
+        box.prop(settings, "ship_mesh_lod_mode", text=t("SHIP_MESH_LOD_MODE"))
+        if settings.ship_mesh_lod_mode == 'DECIMATE':
+            box.prop(settings, "ship_mesh_lod1_ratio")
+            box.prop(settings, "ship_mesh_lod2_ratio")
+            box.prop(settings, "ship_mesh_lod3_ratio")
+
+        box.separator()
+        box.prop(settings, "ship_mesh_wreck_mode", text=t("SHIP_MESH_WRECK_MODE"))
+        if settings.ship_mesh_wreck_mode == 'DECIMATE':
+            box.prop(settings, "ship_mesh_wreck_ratio")
+
+        box.operator("component_fixed.organize_ship_mesh", text=t("SHIP_MESH_ORGANIZE"), icon='MESH_DATA')
+        layout.separator(factor=1.7)
+
         box = layout.box()
         box.label(text=t("BASIC_SETTINGS"), icon='SETTINGS')
 
@@ -3723,6 +4139,10 @@ class COMPONENT_FIXED_PT_placer_panel(bpy.types.Panel):
             row.prop(settings, "auto_count", text=t("AUTO_COUNT"))
             if not settings.auto_count:
                 box.prop(settings, "manual_count", text=t("MANUAL_COUNT"))
+
+            box.separator()
+            box.prop(settings, "placement_surface_mode", text=t("SURFACE_MODE"))
+            box.prop(settings, "placement_forward_mode", text=t("FORWARD_MODE"))
 
         box.separator()
         box.label(text=t("ORIENTATION_SETTINGS") + ":")
@@ -4101,6 +4521,7 @@ classes = (
     COMPONENT_OT_maintain_props,
     COMPONENT_OT_maintain_props_filtered,
     COMPONENT_OT_organize_scene,
+    COMPONENT_OT_organize_ship_mesh,
     COMPONENT_OT_apply_selected_name,
     COMPONENT_OT_import_waypoints,
     COMPONENT_OT_make_waypoint,
