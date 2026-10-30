@@ -58,7 +58,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 48),  # 曲线路径模式位置改回直线等距（同平面模式），仅法线用附近面插值调整朝向
+    "version": (9, 16, 51),  # 曲面模式精简：删除曲线路径与BVH最近点，采纳面合并算法并改名为曲面路径（接触面积）
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -74,7 +74,7 @@ DEFAULT_VALUES = {
     "ALIGN_AXIS": "Z",
     "FORWARD_AXIS": "Y+",
     "ARRANGE_DIRECTION": "LONG_EDGE",
-    "SPACING": 30.0,
+    "SPACING": 78.0,  # = max(COMP_SIZE) * 1.3 = 60 * 1.3
     "AUTO_COUNT": False,
     "MANUAL_COUNT": 3,
     "SURFACE_OFFSET": 0.0,
@@ -128,7 +128,7 @@ COMPONENT_PRESETS = [
     ("机平-方-4m8s", (320.0, 370.0, 115.0), "dockarea_par_xl_carrier_01_macro"),
     ("主武器XL", (170.0, 950.0, 100.0), "weapon_xl"),
     ("主武器L", (25.0, 100.0, 15.0), "weapon_l"),
-    ("超大型炮塔", (80.0, 80.0, 50.0), "turret_xl"),
+    ("超大型炮塔", (160.0, 160.0, 55.0), "turret_xl"),
     ("大型炮塔", (60.0, 60.0, 20.0), "turret_l"),
     ("中型炮塔", (20.0, 20.0, 5.0), "turret_m"),
     ("小型炮塔", (5.0, 5.0, 2.0), "turret_s"),
@@ -294,7 +294,8 @@ MULTI_LANGUAGE_TEXTS = {
         "ARRANGE_DIRECTION_DESC": "多物体排列的方向",
 
         "SPACING": "组件间距",
-        "SPACING_DESC": "多物体排列时的间距",
+        "SPACING_DESC": "多物体排列时的间距（默认自动跟随组件最长边×1.3）",
+        "RESET_SPACING_DESC": "重置间距为组件最长边×1.3，并恢复自动跟随",
 
         "AUTO_COUNT": "自动计算数量",
         "AUTO_COUNT_DESC": "根据面范围自动计算组件数量",
@@ -309,8 +310,8 @@ MULTI_LANGUAGE_TEXTS = {
         "SURFACE_MODE_PLANE_DESC": "把选中面当作一个平面，所有组件同朝向直线排列",
         "SURFACE_MODE_FACE_CENTER": "面中心（逐面法线）",
         "SURFACE_MODE_FACE_CENTER_DESC": "沿排列轴选 N 个面，每个组件放在面中心并用该面法线朝向",
-        "SURFACE_MODE_CURVE_PATH": "曲线路径（法线插值）",
-        "SURFACE_MODE_CURVE_PATH_DESC": "沿曲面采样 N 个点，法线插值周围面，更平滑贴合曲面",
+        "SURFACE_MODE_FACE_MERGE": "曲面路径（接触面积）",
+        "SURFACE_MODE_FACE_MERGE_DESC": "以放置位置为中心收集附近面直到累计面积≈组件接触面积，用合并面平均法线，位置投影到合并平面并贴合曲面",
         "FORWARD_MODE": "朝向参考",
         "FORWARD_MODE_DESC": "组件朝向轴的参考方向",
         "FORWARD_MODE_SETTING": "朝向设置（世界Y+）",
@@ -669,7 +670,8 @@ MULTI_LANGUAGE_TEXTS = {
         "ARRANGE_DIRECTION_DESC": "Multiple objects arrangement direction",
 
         "SPACING": "Component Spacing",
-        "SPACING_DESC": "Spacing between components in multi-object arrangement",
+        "SPACING_DESC": "Spacing between components in multi-object arrangement (auto-follows longest edge ×1.3 by default)",
+        "RESET_SPACING_DESC": "Reset spacing to component longest edge ×1.3 and re-enable auto-follow",
 
         "AUTO_COUNT": "Auto Calculate Count",
         "AUTO_COUNT_DESC": "Automatically calculate component count based on face area",
@@ -684,8 +686,8 @@ MULTI_LANGUAGE_TEXTS = {
         "SURFACE_MODE_PLANE_DESC": "Treat selected faces as one plane; all components share orientation in a straight line",
         "SURFACE_MODE_FACE_CENTER": "Face Center (per-face normal)",
         "SURFACE_MODE_FACE_CENTER_DESC": "Pick N faces along arrange axis; each component sits on a face center using that face's normal",
-        "SURFACE_MODE_CURVE_PATH": "Curve Path (normal interpolation)",
-        "SURFACE_MODE_CURVE_PATH_DESC": "Sample N points along the surface; normals interpolated from nearby faces for smoother conformance",
+        "SURFACE_MODE_FACE_MERGE": "Surface Path (contact area)",
+        "SURFACE_MODE_FACE_MERGE_DESC": "Collect nearby faces around each position until accumulated area ≈ component contact area; use merged average normal; position projected onto merged plane and conformed to surface",
         "FORWARD_MODE": "Forward Ref",
         "FORWARD_MODE_DESC": "Reference direction for the forward axis",
         "FORWARD_MODE_SETTING": "Forward Setting (World Y+)",
@@ -1018,6 +1020,19 @@ def _update_surface_offset(self, context):
     """表面偏移联动：表面偏移 = 组件尺寸联动方向长度 × 百分比"""
     axis_index = {'X': 0, 'Y': 1, 'Z': 2}[self.offset_axis]
     self.surface_offset = self.comp_size[axis_index] * self.offset_percent / 100.0
+    # 间距自动跟随：组件最长边 × 1.3（仅在自动模式下）
+    if getattr(self, 'spacing_auto', True):
+        global _spacing_updating
+        _spacing_updating = True
+        self.spacing = max(self.comp_size) * 1.3
+        _spacing_updating = False
+
+
+def _update_spacing_manual(self, context):
+    """用户手动改 spacing 时，停止自动跟随尺寸（程序自动设置时不触发）"""
+    global _spacing_updating
+    if not _spacing_updating:
+        self.spacing_auto = False
 
 
 # 组件名称四栏默认值：组名 + 链接符 + 组件key + 名称
@@ -1266,8 +1281,11 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         name=t("SPACING"),
         default=DEFAULT_VALUES["SPACING"],
         min=0.5,
+        update=_update_spacing_manual,
         description=t("SPACING_DESC")
     )
+
+    spacing_auto: bpy.props.BoolProperty(default=True)  # 隐藏属性：间距是否自动跟随组件尺寸
 
     auto_count: bpy.props.BoolProperty(
         name=t("AUTO_COUNT"),
@@ -1287,7 +1305,7 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         name=t("SURFACE_MODE"),
         items=[
             ('PLANE', t("SURFACE_MODE_PLANE"), t("SURFACE_MODE_PLANE_DESC")),
-            ('CURVE_PATH', t("SURFACE_MODE_CURVE_PATH"), t("SURFACE_MODE_CURVE_PATH_DESC")),
+            ('FACE_MERGE', t("SURFACE_MODE_FACE_MERGE"), t("SURFACE_MODE_FACE_MERGE_DESC")),
             ('FACE_CENTER', t("SURFACE_MODE_FACE_CENTER"), t("SURFACE_MODE_FACE_CENTER_DESC")),
         ],
         default='PLANE',
@@ -2058,9 +2076,70 @@ class COMPONENT_OT_placer(bpy.types.Operator):
             # 面中心模式：沿排列轴方向选 N 个面，每个组件放在面中心，用该面法线
             return self._positions_face_center(face_data, count, arrange_axis)
 
-        else:  # CURVE_PATH
-            # 曲线路径模式：位置沿排列轴等距直线分布（同平面模式），法线用附近面加权插值
-            return self._positions_curve_path(face_data, count, arrange_axis, settings.spacing)
+        else:
+            # 曲面路径（接触面积）模式：
+            # 位置沿排列轴等距分布不变，垂直方向贴合局部曲面
+            return self._positions_surface(face_data, count, arrange_axis, settings, bm)
+
+    def _positions_surface(self, face_data, count, arrange_axis, settings, bm):
+        """曲面路径（接触面积）：位置沿排列轴等距分布（排列轴方向坐标不变），
+        仅垂直于排列轴的方向贴合局部曲面；法线=合并面面积加权平均法线"""
+        faces = face_data['faces']
+        if not faces:
+            return [], [], 0, arrange_axis
+
+        center = face_data['center']
+        spacing = settings.spacing
+
+        # 基础位置：沿排列轴等距直线分布
+        total_length = (count - 1) * spacing
+        start_pos = center - arrange_axis * (total_length / 2)
+        base_positions = [start_pos + arrange_axis * (i * spacing) for i in range(count)]
+
+        positions = []
+        normals = []
+
+        for base_pos in base_positions:
+            # 收集附近面直到累计面积 >= 组件接触面积，得到合并面平均法线与中心
+            merged_normal, merged_center = self._merge_faces_normal(base_pos, faces, settings)
+            # 位置：基础位置沿合并法线投影到合并平面，再保持排列轴坐标不变
+            offset = (base_pos - merged_center).dot(merged_normal)
+            proj_pos = base_pos - merged_normal * offset
+            t_base = base_pos.dot(arrange_axis)
+            t_proj = proj_pos.dot(arrange_axis)
+            conformed_proj = proj_pos + arrange_axis * (t_base - t_proj)
+            positions.append(conformed_proj)
+            normals.append(merged_normal)
+
+        return positions, normals, count, arrange_axis
+
+    def _merge_faces_normal(self, base_pos, faces, settings):
+        """以 base_pos 为中心收集附近面，直到累计面积 >= 组件接触面积
+        返回 (平均法线, 面积加权中心)"""
+        # 接触面积 = 组件法向轴之外两轴的乘积（近似接触面积）
+        size_index = {'X': 0, 'Y': 1, 'Z': 2}[settings.align_axis[0]]
+        others = [v for i, v in enumerate(settings.comp_size) if i != size_index]
+        contact_area = max(others[0] * others[1], 1.0)
+
+        # 按到 base_pos 的距离排序
+        sorted_faces = sorted(faces, key=lambda f: (f['center'] - base_pos).length)
+
+        accumulated = 0.0
+        weighted_normal = Vector()
+        weighted_center = Vector()
+        for f in sorted_faces:
+            weighted_normal += f['normal'] * f['area']
+            weighted_center += f['center'] * f['area']
+            accumulated += f['area']
+            if accumulated >= contact_area:
+                break
+
+        if accumulated < 1e-8:
+            return faces[0]['normal'], faces[0]['center']
+
+        avg_normal = (weighted_normal / accumulated).normalized()
+        avg_center = weighted_center / accumulated
+        return avg_normal, avg_center
 
     def _positions_face_center(self, face_data, count, arrange_axis):
         """面中心模式：把选中面按排列轴投影排序，等距选 count 个面"""
@@ -2092,37 +2171,6 @@ class COMPONENT_OT_placer(bpy.types.Operator):
                 f = sorted_faces[idx]
                 positions.append(f['center'])
                 normals.append(f['normal'])
-
-        return positions, normals, count, arrange_axis
-
-    def _positions_curve_path(self, face_data, count, arrange_axis, spacing):
-        """曲线路径模式：位置沿排列轴等距直线分布（与平面模式一致），
-        每个位置点的法线用附近面按距离加权插值（只调朝向，不改位置）"""
-        faces = face_data['faces']
-        if not faces:
-            return [], [], 0, arrange_axis
-
-        center = face_data['center']
-        # 位置：沿排列轴等距直线分布（与平面模式完全一致）
-        total_length = (count - 1) * spacing
-        start_pos = center - arrange_axis * (total_length / 2)
-        positions = [start_pos + arrange_axis * (i * spacing) for i in range(count)]
-
-        # 法线：每个位置点用附近面的法线按距离平方反比加权插值
-        normals = []
-        for pos in positions:
-            normal = Vector()
-            wsum = 0.0
-            for f in faces:
-                dist = (pos - f['center']).length
-                w = 1.0 / max(dist * dist, 1e-8)  # 平方反比，近处面权重更大
-                normal += f['normal'] * w
-                wsum += w
-            if wsum > 0:
-                normal = (normal / wsum).normalized()
-            else:
-                normal = face_data['normal']
-            normals.append(normal)
 
         return positions, normals, count, arrange_axis
 
@@ -3268,6 +3316,23 @@ class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class COMPONENT_OT_reset_spacing(bpy.types.Operator):
+    """重置组件间距为最长边×1.3 并恢复自动跟随"""
+    bl_idname = "component_fixed.reset_spacing"
+    bl_label = "Reset Spacing"
+    bl_description = "Reset spacing to component longest edge ×1.3 and re-enable auto-follow"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        s = context.scene.component_settings_fixed
+        global _spacing_updating
+        s.spacing_auto = True
+        _spacing_updating = True
+        s.spacing = max(s.comp_size) * 1.3
+        _spacing_updating = False
+        return {'FINISHED'}
+
+
 class COMPONENT_OT_apply_selected_name(bpy.types.Operator):
     """将选中组件的名称解构回填到组名/组件名称栏"""
     bl_idname = "component_fixed.apply_selected_name"
@@ -4076,29 +4141,6 @@ class COMPONENT_FIXED_PT_placer_panel(bpy.types.Panel):
         box.operator("component_fixed.organize_scene", text=t("ORGANIZE_SCENE"), icon='OUTLINER_COLLECTION')
         layout.separator(factor=1.7)
 
-        # ========== 整理舰船网格：EVE 网格 → X4 命名规范（part_main + collision/LOD1-3/wreck） ==========
-        box = layout.box()
-        box.label(text=t("SHIP_MESH_ORGANIZE"), icon='MESH_DATA')
-        box.prop(settings, "ship_mesh_prefix")
-        box.prop(settings, "ship_mesh_mat_name")
-        box.prop(settings, "ship_mesh_wreck_mat")
-
-        box.separator()
-        box.prop(settings, "ship_mesh_create_collision")
-        box.prop(settings, "ship_mesh_lod_mode", text=t("SHIP_MESH_LOD_MODE"))
-        if settings.ship_mesh_lod_mode == 'DECIMATE':
-            box.prop(settings, "ship_mesh_lod1_ratio")
-            box.prop(settings, "ship_mesh_lod2_ratio")
-            box.prop(settings, "ship_mesh_lod3_ratio")
-
-        box.separator()
-        box.prop(settings, "ship_mesh_wreck_mode", text=t("SHIP_MESH_WRECK_MODE"))
-        if settings.ship_mesh_wreck_mode == 'DECIMATE':
-            box.prop(settings, "ship_mesh_wreck_ratio")
-
-        box.operator("component_fixed.organize_ship_mesh", text=t("SHIP_MESH_ORGANIZE"), icon='MESH_DATA')
-        layout.separator(factor=1.7)
-
         box = layout.box()
         box.label(text=t("BASIC_SETTINGS"), icon='SETTINGS')
 
@@ -4133,7 +4175,9 @@ class COMPONENT_FIXED_PT_placer_panel(bpy.types.Panel):
         box.prop(settings, "placement_mode", text="")
         if settings.placement_mode == 'MULTI':
             box.prop(settings, "arrange_direction")
-            box.prop(settings, "spacing", text=t("SPACING"))
+            row = box.row(align=True)
+            row.prop(settings, "spacing", text=t("SPACING"))
+            row.operator("component_fixed.reset_spacing", text="", icon='FILE_REFRESH')
 
             row = box.row()
             row.prop(settings, "auto_count", text=t("AUTO_COUNT"))
@@ -4440,6 +4484,7 @@ except ImportError:  # 后台模式等无 gpu 模块环境
     _GPU_AVAILABLE = False
 
 _axis_draw_handler = None
+_spacing_updating = False  # 标记 spacing 是否由程序自动设置（避免误触手动回调）
 
 _AXIS_COLORS = (
     (0.95, 0.15, 0.15, 1.0),  # X 红
@@ -4501,6 +4546,41 @@ def _remove_axis_draw_handler():
         _axis_draw_handler = None
 
 
+class COMPONENT_FIXED_PT_ship_mesh_panel(bpy.types.Panel):
+    """整理舰船网格面板（第三个独立面板）"""
+    bl_label = t("SHIP_MESH_ORGANIZE")
+    bl_idname = "COMPONENT_FIXED_PT_ship_mesh_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "组件放置-修正"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        settings = scene.component_settings_fixed
+
+        box = layout.box()
+        box.prop(settings, "ship_mesh_prefix")
+        box.prop(settings, "ship_mesh_mat_name")
+        box.prop(settings, "ship_mesh_wreck_mat")
+
+        box.separator()
+        box.prop(settings, "ship_mesh_create_collision")
+        box.prop(settings, "ship_mesh_lod_mode", text=t("SHIP_MESH_LOD_MODE"))
+        if settings.ship_mesh_lod_mode == 'DECIMATE':
+            box.prop(settings, "ship_mesh_lod1_ratio")
+            box.prop(settings, "ship_mesh_lod2_ratio")
+            box.prop(settings, "ship_mesh_lod3_ratio")
+
+        box.separator()
+        box.prop(settings, "ship_mesh_wreck_mode", text=t("SHIP_MESH_WRECK_MODE"))
+        if settings.ship_mesh_wreck_mode == 'DECIMATE':
+            box.prop(settings, "ship_mesh_wreck_ratio")
+
+        box.operator("component_fixed.organize_ship_mesh", text=t("SHIP_MESH_ORGANIZE"), icon='MESH_DATA')
+
+
 classes = (
     ComponentSettingsFixed,
     TranslationSettingsFixed,
@@ -4522,6 +4602,7 @@ classes = (
     COMPONENT_OT_maintain_props_filtered,
     COMPONENT_OT_organize_scene,
     COMPONENT_OT_organize_ship_mesh,
+    COMPONENT_OT_reset_spacing,
     COMPONENT_OT_apply_selected_name,
     COMPONENT_OT_import_waypoints,
     COMPONENT_OT_make_waypoint,
@@ -4534,7 +4615,8 @@ classes = (
     COMPONENT_OT_rebuild_wp_constraints,
     COMPONENT_OT_export_waypoints,
     COMPONENT_FIXED_PT_placer_panel,
-    COMPONENT_FIXED_PT_waypoint_panel
+    COMPONENT_FIXED_PT_waypoint_panel,
+    COMPONENT_FIXED_PT_ship_mesh_panel
 )
 
 def register():
