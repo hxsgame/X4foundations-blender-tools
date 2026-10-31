@@ -1,5 +1,6 @@
 import bpy
 import bmesh
+import json
 import math
 import os
 import numpy as np
@@ -58,7 +59,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 51),  # 曲面模式精简：删除曲线路径与BVH最近点，采纳面合并算法并改名为曲面路径（接触面积）
+    "version": (9, 16, 62),  # 航路编辑器：集合→原点空物体（组件空间），导入子级/导出按原点过滤；前缀默认waypoints_，无前缀自动补前缀+文件名
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -257,6 +258,22 @@ MULTI_LANGUAGE_TEXTS = {
         "SHIP_MESH_LOD_RATIO_DESC": "保留面数比例（0.01~1.0），仅在「按比例减面」模式下生效",
         "SHIP_MESH_CREATE_COLLISION": "生成 Collision",
         "SHIP_MESH_CREATE_COLLISION_DESC": "勾选时额外生成 part_main.collision（不附材质），默认不生成",
+        "SCALE_EXPORT": "组件缩放器",
+        "SCALE_EXPORT_DESC": "按倍数 k 缩放组件网格顶点与 connection offset，生成新 id 的组件 XML",
+        "SCALE_EGO_DIR": "ego 工具修改路径",
+        "SCALE_EGO_DIR_DESC": "ego 工具的修改/输出根目录，用于另存 .blend 与后续 ego 导出；选择后自动持久保留",
+        "SCALE_FACTOR": "缩放倍数 k",
+        "SCALE_FACTOR_DESC": "等比缩放倍数（如 1.5 表示放大 1.5 倍），改值时实时缩放选中物体",
+        "SCALE_SUFFIX": "新 id 后缀",
+        "SCALE_SUFFIX_DESC": "追加到新 id 名后的后缀（如 _x150），可手动覆盖",
+        "SCALE_NEW_ID": "新 id 名",
+        "SCALE_NEW_ID_DESC": "用户手动填写的新组件 id 名（与新 id 后缀组合生成最终 id）",
+        "SCALE_SAVE_BLEND": "另存 .blend 到 ego 路径",
+        "SCALE_SAVE_BLEND_DONE": "已另存为：{}",
+        "SCALE_ERR_NO_EGO_DIR": "请先指定 ego 工具修改路径",
+        "SCALE_ERR_NO_ID": "请先输入新 id 名",
+        "SCALE_NOTE_SCENE": "调整缩放倍数即可实时缩放选中物体（绕世界原点）",
+        "SCALE_NOTE_SAVE_BLEND": "用 ego 导出前请先保存 .blend 文件（否则 ego 还原场景会报 Permission denied）",
         "ERROR_NO_MESH": "场景中未找到网格物体，请先选中或导入一个 MESH",
         "ERROR_ALREADY_ORGANIZED": "该网格已整理过（含 x4_ship_mesh_organized 标记），已跳过。如需重新整理请先删除该自定义属性。",
         "INFO_SHIP_MESH_DONE": "舰船网格整理完成，已生成 {} 个衍生物体",
@@ -446,6 +463,10 @@ MULTI_LANGUAGE_TEXTS = {
         "WP_PANEL_TITLE": "航路编辑器",
         "WP_XML_PATH": "XML 文件路径",
         "WP_XML_PATH_DESC": "X4 舰船/机坪 XML 文件路径",
+        "WP_ORIGIN_PREFIX": "原点前缀",
+        "WP_ORIGIN_PREFIX_DESC": "用作组件原点的空物体名称前缀；导入时若指定的空物体无前缀则自动补上 前缀+文件名",
+        "WP_ORIGIN_EMPTY": "导入原点空物体",
+        "WP_ORIGIN_EMPTY_DESC": "导入的航路点和停靠湾作为此空物体的子级（组件空间原点）；留空则自动新建一个（前缀+文件名）",
         "WP_BASE_NAME": "清除前缀",
         "WP_NAME_GROUP": "组名",
         "WP_NAME_GROUP_DESC": "新建 waypoint 的组名前缀（同时写入 group 自定义属性供泊位绑定）；留空则不带组",
@@ -508,6 +529,8 @@ MULTI_LANGUAGE_TEXTS = {
         "WP_EXPORT_DESC": "导出为 x4_wp_export.py 所需的 XML 格式",
         "WP_EXPORT_PATH": "导出路径",
         "WP_EXPORT_PATH_DESC": "导出 waypoints XML 的目标文件路径",
+        "WP_EXPORT_ORIGIN": "导出原点",
+        "WP_EXPORT_ORIGIN_DESC": "仅导出此原点空物体子级中的硬点（区分多停靠区）；留空则导出选中或全部硬点",
         "WP_EXPORT_DONE": "已导出 {} waypoint + {} dockingbay（{} 条警告）→ {}",
         "WP_EXPORT_EMPTY": "没有可导出的硬点（选中或当前集合内无带 hardpoint_type/tags 属性的物体）",
         "WP_EXPORT_ERR_DASH3": "dockingbay '{}' 的名称或组名含 '{}'（与连接符冲突），请先改为 '_' 后重新导出",
@@ -633,6 +656,22 @@ MULTI_LANGUAGE_TEXTS = {
         "SHIP_MESH_LOD_RATIO_DESC": "Ratio of faces to keep (0.01~1.0), only used in Decimate mode",
         "SHIP_MESH_CREATE_COLLISION": "Create Collision",
         "SHIP_MESH_CREATE_COLLISION_DESC": "Also generate part_main.collision (no material) when checked. Off by default.",
+        "SCALE_EXPORT": "Component Scaler",
+        "SCALE_EXPORT_DESC": "Scale component mesh vertices and connection offsets by factor k, generate a new-id component XML",
+        "SCALE_EGO_DIR": "ego Tools Modify Path",
+        "SCALE_EGO_DIR_DESC": "ego tools modify/output root directory for saving .blend and subsequent ego export; auto-persists after selection",
+        "SCALE_FACTOR": "Scale Factor k",
+        "SCALE_FACTOR_DESC": "Uniform scale factor (e.g. 1.5 means 1.5x larger); changing it scales selected objects in real time",
+        "SCALE_SUFFIX": "New ID Suffix",
+        "SCALE_SUFFIX_DESC": "Suffix appended to the new id name (e.g. _x150); can be overridden manually",
+        "SCALE_NEW_ID": "New ID Name",
+        "SCALE_NEW_ID_DESC": "User-entered new component id name (combined with the new id suffix to form the final id)",
+        "SCALE_SAVE_BLEND": "Save .blend to ego Path",
+        "SCALE_SAVE_BLEND_DONE": "Saved as: {}",
+        "SCALE_ERR_NO_EGO_DIR": "Please specify the ego tools modify path first",
+        "SCALE_ERR_NO_ID": "Please enter a new id name first",
+        "SCALE_NOTE_SCENE": "Adjusting the scale factor scales selected objects in real time (around world origin)",
+        "SCALE_NOTE_SAVE_BLEND": "Save the .blend file before exporting with ego (otherwise ego's scene revert raises Permission denied)",
         "ERROR_NO_MESH": "No mesh object found. Select or import a MESH first.",
         "ERROR_ALREADY_ORGANIZED": "This mesh was already organized (x4_ship_mesh_organized flag set). Skipped. Remove the custom property to re-organize.",
         "INFO_SHIP_MESH_DONE": "Ship mesh organized, {} derivative objects created",
@@ -822,6 +861,10 @@ MULTI_LANGUAGE_TEXTS = {
         "WP_PANEL_TITLE": "Route Editor",
         "WP_XML_PATH": "XML File Path",
         "WP_XML_PATH_DESC": "Path to X4 ship/dockarea XML file",
+        "WP_ORIGIN_PREFIX": "Origin Prefix",
+        "WP_ORIGIN_PREFIX_DESC": "Name prefix for empties used as component origins; on import, a specified empty without the prefix is renamed to prefix+filename",
+        "WP_ORIGIN_EMPTY": "Import Origin Empty",
+        "WP_ORIGIN_EMPTY_DESC": "Imported waypoints and dockingbays are parented to this empty (component-space origin); empty = auto-create one (prefix+filename)",
         "WP_BASE_NAME": "Clear Prefix",
         "WP_NAME_GROUP": "Group Name",
         "WP_NAME_GROUP_DESC": "Group prefix for new waypoints (also written to the group custom property for berth binding); empty means no group",
@@ -884,6 +927,8 @@ MULTI_LANGUAGE_TEXTS = {
         "WP_EXPORT_DESC": "Export to XML format required by x4_wp_export.py",
         "WP_EXPORT_PATH": "Export Path",
         "WP_EXPORT_PATH_DESC": "Destination file path for the waypoints XML",
+        "WP_EXPORT_ORIGIN": "Export Origin",
+        "WP_EXPORT_ORIGIN_DESC": "Export only hardpoints parented under this origin empty (separate multiple docking areas); empty = selected or all hardpoints",
         "WP_EXPORT_DONE": "Exported {} waypoint(s) + {} dockingbay(s) ({} warning(s)) → {}",
         "WP_EXPORT_EMPTY": "No hardpoints to export (no selected or in-collection object with hardpoint_type/tags property)",
         "WP_EXPORT_ERR_DASH3": "dockingbay '{}' name or group contains '{}' (conflicts with the separator); change it to '_' and re-export",
@@ -1035,6 +1080,91 @@ def _update_spacing_manual(self, context):
         self.spacing_auto = False
 
 
+def _scale_config_path():
+    """返回持久化配置 JSON 的路径（Blender 用户配置目录），跨启动保留。"""
+    cfg_dir = bpy.utils.user_resource('CONFIG')
+    return os.path.join(cfg_dir, "component_scaler_ego_dir.json")
+
+
+def _load_scale_ego_dir():
+    """从 JSON 配置读取上次保存的 ego 路径；失败返回空字符串。"""
+    p = _scale_config_path()
+    if not os.path.isfile(p):
+        return ""
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return str(data.get("ego_dir", ""))
+    except Exception:
+        return ""
+
+
+def _save_scale_ego_dir(path):
+    """把 ego 路径写入 JSON 配置。"""
+    p = _scale_config_path()
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump({"ego_dir": str(path)}, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+_scale_ego_updating = type("_Flag", (), {"flag": False})()  # ego 路径 update 回调的递归保护
+
+
+def _poll_origin_empty(self, obj):
+    """PointerProperty 过滤：只列出空物体（作为组件原点候选）。"""
+    return obj.type == 'EMPTY'
+
+
+def _poll_prefixed_origin(self, obj):
+    """PointerProperty 过滤：只列出带原点前缀的空物体（导出时选哪个停靠区的原点）。"""
+    prefix = (self.wp_origin_prefix or "waypoints_").strip()
+    return obj.type == 'EMPTY' and obj.name.startswith(prefix)
+
+
+
+def _update_scale_ego_dir(self, context):
+    """用户修改 ego 路径时持久化到 JSON，重启 Blender 后仍保留。
+    转成绝对路径再保存，避免相对路径（//）在无 .blend 时解析失败。
+    同时把属性值也设为绝对路径，保证面板显示完整路径、保存时可直接用。
+    仅保存非空路径，避免清空字段时覆盖已保存的路径。"""
+    if getattr(_scale_ego_updating, "flag", False):
+        return
+    if not self.scale_ego_dir.strip():
+        return
+    abs_path = bpy.path.abspath(self.scale_ego_dir)
+    _save_scale_ego_dir(abs_path)
+    # 把属性设为绝对路径（Blender DIR_PATH 可能转相对，这里强制写回绝对）
+    _scale_ego_updating.flag = True
+    try:
+        self.scale_ego_dir = abs_path
+    finally:
+        _scale_ego_updating.flag = False
+
+
+def _update_scale_factor(self, context):
+    """缩放倍数变化时：实时缩放选中物体（绕世界原点）+ 自动生成 id 后缀。
+    用 新k/旧k 的比值缩放，避免叠加；若无选中物体则只更新后缀。"""
+    new_k = self.scale_factor
+    old_k = getattr(self, "scale_applied_factor", 1.0)
+    # 更新后缀
+    self.scale_suffix = f"_x{int(round(new_k * 100))}"
+    # 实时缩放选中物体
+    if context is not None and context.selected_objects:
+        if old_k != 0 and old_k != new_k:
+            ratio = new_k / old_k
+            for obj in context.selected_objects:
+                if obj.type == 'MESH':
+                    me = obj.data
+                    for v in me.vertices:
+                        v.co *= ratio
+                    me.update()
+                elif obj.type == 'EMPTY':
+                    obj.location *= ratio
+    self.scale_applied_factor = new_k
+
+
 # 组件名称四栏默认值：组名 + 链接符 + 组件key + 名称
 # 组名按用户要求默认 left_g_01（9.14.4 起，曾用 left_con_g_01）；key 标识本工具放置的硬点（膨胀/收缩识别 + XML 工具剥离）
 # 名称段取 DEFAULT_VALUES["COMP_NAME"] 的名称部分（数据块原值保留不动）
@@ -1156,6 +1286,19 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         description=t("WP_XML_PATH_DESC")
     )
 
+    wp_origin_prefix: bpy.props.StringProperty(
+        name=t("WP_ORIGIN_PREFIX"),
+        default="waypoints_",
+        description=t("WP_ORIGIN_PREFIX_DESC")
+    )
+
+    wp_origin_empty: bpy.props.PointerProperty(
+        name=t("WP_ORIGIN_EMPTY"),
+        type=bpy.types.Object,
+        poll=_poll_origin_empty,
+        description=t("WP_ORIGIN_EMPTY_DESC")
+    )
+
     wp_base_name: bpy.props.StringProperty(
         name=t("WP_BASE_NAME"),
         default="waypoint",
@@ -1231,6 +1374,13 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         default="",
         subtype='FILE_PATH',
         description=t("WP_EXPORT_PATH_DESC")
+    )
+
+    wp_export_origin: bpy.props.PointerProperty(
+        name=t("WP_EXPORT_ORIGIN"),
+        type=bpy.types.Object,
+        poll=_poll_prefixed_origin,
+        description=t("WP_EXPORT_ORIGIN_DESC")
     )
 
     comp_size: bpy.props.FloatVectorProperty(
@@ -1473,6 +1623,41 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         name=t("SHIP_MESH_CREATE_COLLISION"),
         default=False,
         description=t("SHIP_MESH_CREATE_COLLISION_DESC")
+    )
+
+    # ===== 组件缩放器 =====
+    scale_ego_dir: bpy.props.StringProperty(
+        name=t("SCALE_EGO_DIR"),
+        default="",
+        subtype='DIR_PATH',
+        update=_update_scale_ego_dir,
+        description=t("SCALE_EGO_DIR_DESC")
+    )
+
+    scale_factor: bpy.props.FloatProperty(
+        name=t("SCALE_FACTOR"),
+        default=1.5,
+        min=0.1,
+        update=_update_scale_factor,
+        description=t("SCALE_FACTOR_DESC")
+    )
+
+    scale_applied_factor: bpy.props.FloatProperty(
+        name="Scale Applied Factor",
+        default=1.0,
+        description="内部记录：上次实际应用到场景物体的缩放倍数，用于计算增量比值"
+    )
+
+    scale_suffix: bpy.props.StringProperty(
+        name=t("SCALE_SUFFIX"),
+        default="_x150",
+        description=t("SCALE_SUFFIX_DESC")
+    )
+
+    scale_new_id: bpy.props.StringProperty(
+        name=t("SCALE_NEW_ID"),
+        default="",
+        description=t("SCALE_NEW_ID_DESC")
     )
 
 
@@ -3401,13 +3586,25 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
         m_height = settings.wp_m_height
         default_size = settings.wp_default_size
 
-        # 清除已有对象
+        # 清除已有对象（先于原点处理，避免重命名后的原点被误删）
         if settings.wp_clear_existing:
             for obj in list(context.scene.objects):
                 if (obj.name.startswith(base_name) or
                         obj.name.startswith("XU_Waypoint") or
                         "dockingbay" in obj.name.lower()):
                     bpy.data.objects.remove(obj, do_unlink=True)
+
+        # 原点空物体：组件空间原点。导入的航路点/泊位作为其子级摆放，
+        # 导出时相对此原点 = 组件空间坐标（与 ego 插件按组件集合原点导出一致）。
+        prefix = (settings.wp_origin_prefix or "waypoints_").strip()
+        file_base = os.path.splitext(os.path.basename(xml_path))[0]
+        origin = settings.wp_origin_empty
+        if origin is None:
+            origin = bpy.data.objects.new(prefix + file_base, None)
+            origin.empty_display_type = 'PLAIN_AXES'
+            context.scene.collection.objects.link(origin)
+        elif not origin.name.startswith(prefix):
+            origin.name = prefix + file_base
 
         # 加载 XML
         try:
@@ -3495,6 +3692,8 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             obj = bpy.data.objects.new(obj_name, None)
             obj.empty_display_size = default_size
             obj.empty_display_type = empty_type
+            obj.parent = origin
+            obj.matrix_parent_inverse = Matrix.Identity(4)  # 世界=原点+偏移，局部=组件空间
             obj.location = location
             context.scene.collection.objects.link(obj)
 
@@ -3552,6 +3751,8 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             obj = bpy.data.objects.new(obj_name, None)
             obj.empty_display_type = 'CUBE'
             obj.empty_display_size = 1.0
+            obj.parent = origin
+            obj.matrix_parent_inverse = Matrix.Identity(4)  # 世界=原点+偏移，局部=组件空间
             obj.location = location
             context.scene.collection.objects.link(obj)
 
@@ -3892,19 +4093,29 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
 
     @staticmethod
     def _collect(context):
-        # 默认输出全部硬点（waypoint + dockingbay）；有选中硬点时只导出选中
-        # 用场景根集合递归（scene.collection.all_objects），硬点在任何集合都不会漏
+        # 收集硬点：优先按「导出原点」过滤（区分多停靠区，原点的所有子级）；
+        # 未选原点时退化为选中/全部。返回 (硬点列表, 原点空物体或None)。
+        settings = context.scene.component_settings_fixed
+        origin = settings.wp_export_origin
+        if origin is not None:
+            objs = [o for o in origin.children_recursive
+                    if COMPONENT_OT_export_waypoints._is_hardpoint(o)]
+            return objs, origin
+
         selected = [o for o in context.selected_objects
                     if COMPONENT_OT_export_waypoints._is_hardpoint(o)]
         if selected:
-            return selected
+            return selected, None
         return [o for o in context.scene.collection.all_objects
-                if COMPONENT_OT_export_waypoints._is_hardpoint(o)]
+                if COMPONENT_OT_export_waypoints._is_hardpoint(o)], None
 
     @staticmethod
-    def _convert(obj):
-        m = obj.matrix_world
-        p = m.translation
+    def _convert(obj, origin):
+        if origin is not None:
+            # 组件空间坐标：相对原点空物体的世界变换（与 ego 插件按组件集合原点导出一致）
+            p = (origin.matrix_world.inverted() @ obj.matrix_world).translation
+        else:
+            p = obj.matrix_world.translation
         # 位置：导入 (x, z, y) 的逆映射，与游戏原文件一致（不再 z 取反）
         x, y, z = p.x, p.z, p.y
         # 旋转：lane 属性优先——inbound=恒等朝向，outbound=绕竖直轴 180°（原版 dockarea 车道规律：
@@ -4041,7 +4252,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
                 self.report({'ERROR'}, str(e))
                 return {'CANCELLED'}
 
-        objs = self._collect(context)
+        objs, origin = self._collect(context)
         if not objs:
             self.report({'WARNING'}, t("WP_EXPORT_EMPTY"))
             return {'CANCELLED'}
@@ -4088,7 +4299,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
             # links 里存的是 Blender 物体名（带 group+连接符前缀），按全场景名称表映射回基础名
             links_list = [scene_map.get(ln, name_map.get(ln, ln.split(sep, 1)[1] if sep in ln else ln))
                           for ln in links_str.split() if ln]
-            pos_rot = self._convert(o)
+            pos_rot = self._convert(o, origin)
             wps.append((hp_type, export_name, group, tags_str, links_list, pos_rot))
 
         errors, warnings = self._validate(wps, sep, scene_wp_names)
@@ -4383,6 +4594,8 @@ class COMPONENT_FIXED_PT_waypoint_panel(bpy.types.Panel):
         box = layout.box()
         box.label(text=t("WP_IMPORT"), icon='IMPORT')
         box.prop(settings, "wp_xml_path", text="")
+        box.prop(settings, "wp_origin_prefix")
+        box.prop(settings, "wp_origin_empty")
 
         box.prop(settings, "wp_base_name")
         box.prop(settings, "wp_clear_existing")
@@ -4469,6 +4682,7 @@ class COMPONENT_FIXED_PT_waypoint_panel(bpy.types.Panel):
         box = layout.box()
         box.label(text=t("WP_EXPORT"), icon='EXPORT')
         box.prop(settings, "wp_export_path", text="")
+        box.prop(settings, "wp_export_origin")
         box.operator("component_fixed.export_waypoints", text=t("WP_EXPORT"), icon='EXPORT')
 
 
@@ -4546,6 +4760,20 @@ def _remove_axis_draw_handler():
         _axis_draw_handler = None
 
 
+def _restore_ego_dir_handler(dummy):
+    """加载 .blend 后，若场景的 ego 路径为空，从 JSON 配置恢复（不在 draw 中写属性）。"""
+    try:
+        scenes = bpy.data.scenes
+    except AttributeError:
+        return  # bpy.data 尚未就绪（注册阶段），跳过
+    for scene in scenes:
+        s = getattr(scene, "component_settings_fixed", None)
+        if s is not None and not s.scale_ego_dir.strip():
+            saved = _load_scale_ego_dir()
+            if saved:
+                s.scale_ego_dir = saved
+
+
 class COMPONENT_FIXED_PT_ship_mesh_panel(bpy.types.Panel):
     """整理舰船网格面板（第三个独立面板）"""
     bl_label = t("SHIP_MESH_ORGANIZE")
@@ -4579,6 +4807,81 @@ class COMPONENT_FIXED_PT_ship_mesh_panel(bpy.types.Panel):
             box.prop(settings, "ship_mesh_wreck_ratio")
 
         box.operator("component_fixed.organize_ship_mesh", text=t("SHIP_MESH_ORGANIZE"), icon='MESH_DATA')
+
+
+class COMPONENT_OT_scale_save_blend(bpy.types.Operator):
+    """以当前新 id 名命名，把场景另存为 .blend 到 ego 工具修改路径（不切换当前文件）。
+    若目标文件已存在，Blender 会弹出覆盖确认。"""
+    bl_idname = "component_fixed.scale_save_blend"
+    bl_label = t("SCALE_SAVE_BLEND")
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        settings = context.scene.component_settings_fixed
+
+        ego_dir = bpy.path.abspath(settings.scale_ego_dir).strip()
+        if not ego_dir:
+            self.report({'WARNING'}, t("SCALE_ERR_NO_EGO_DIR"))
+            return {'CANCELLED'}
+
+        comp_base = settings.scale_new_id.strip()
+        if not comp_base:
+            self.report({'WARNING'}, t("SCALE_ERR_NO_ID"))
+            return {'CANCELLED'}
+        # 最终文件名 = 新 id 名 + 新 id 后缀
+        comp_id = comp_base + settings.scale_suffix.strip()
+
+        os.makedirs(ego_dir, exist_ok=True)
+        out_path = os.path.join(ego_dir, comp_id + ".blend")
+        # copy=True：另存为副本，不改变当前 bpy.data.filepath
+        # check_existing=True：若同名文件存在则弹出覆盖确认
+        bpy.ops.wm.save_as_mainfile(filepath=out_path, copy=True, check_existing=True)
+        self.report({'INFO'}, t("SCALE_SAVE_BLEND_DONE", out_path))
+        return {'FINISHED'}
+
+
+class COMPONENT_FIXED_PT_scale_export_panel(bpy.types.Panel):
+    """组件缩放器面板（第四个独立面板）"""
+    bl_label = t("SCALE_EXPORT")
+    bl_idname = "COMPONENT_FIXED_PT_scale_export_panel"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "组件放置-修正"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        settings = scene.component_settings_fixed
+
+        # 注意：不在 draw 中写属性，避免触发 update 导致面板绘制崩溃。
+        # 路径恢复由 load_post handler 在文件加载时完成。
+        box = layout.box()
+        # 工作流说明
+        box.label(text=t("SCALE_NOTE_SCENE"), icon='INFO')
+        box.separator()
+
+        # 缩放倍数：改值时实时缩放选中物体（绕世界原点）
+        box.prop(settings, "scale_factor")
+        box.prop(settings, "scale_suffix")
+
+        box.separator()
+        # 新 id 名（用户手动填写）
+        box.prop(settings, "scale_new_id")
+
+        box.separator()
+        # 保存提示
+        box.label(text=t("SCALE_NOTE_SAVE_BLEND"), icon='ERROR')
+
+        box.separator()
+        # ego 工具修改路径（持久化）
+        box.prop(settings, "scale_ego_dir", text=t("SCALE_EGO_DIR"))
+
+        box.separator()
+        # 另存 .blend 到 ego 路径
+        row = box.row()
+        row.scale_y = 1.2
+        row.operator("component_fixed.scale_save_blend", text=t("SCALE_SAVE_BLEND"), icon='FILE_TICK')
 
 
 classes = (
@@ -4616,7 +4919,9 @@ classes = (
     COMPONENT_OT_export_waypoints,
     COMPONENT_FIXED_PT_placer_panel,
     COMPONENT_FIXED_PT_waypoint_panel,
-    COMPONENT_FIXED_PT_ship_mesh_panel
+    COMPONENT_FIXED_PT_ship_mesh_panel,
+    COMPONENT_OT_scale_save_blend,
+    COMPONENT_FIXED_PT_scale_export_panel
 )
 
 def register():
@@ -4627,9 +4932,18 @@ def register():
     bpy.types.Scene.component_translation_fixed = bpy.props.PointerProperty(type=TranslationSettingsFixed)
 
     _ensure_axis_draw_handler()
+    if _restore_ego_dir_handler not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_restore_ego_dir_handler)
+    # 注册后尝试恢复一次（首次启用插件时）；bpy.data 未就绪则跳过
+    try:
+        _restore_ego_dir_handler(None)
+    except Exception:
+        pass
 
 def unregister():
     _remove_axis_draw_handler()
+    if _restore_ego_dir_handler in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_restore_ego_dir_handler)
 
     for prop_name in ("component_settings_fixed", "component_translation_fixed"):
         try:
