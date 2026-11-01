@@ -59,7 +59,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 64),  # 场景整理：航路原点+子树整体归入 Waypoints 集合（保持父子结构），不再跳过
+    "version": (9, 16, 65),  # 导入修复：clear-existing 按标记属性删除（不再按名称前缀）；子对象归入原点所在集合（保持集合归属一致）
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3296,9 +3296,10 @@ class COMPONENT_OT_organize_scene(bpy.types.Operator):
         moved = 0
         used_cols = set()
 
-        # —— 航路原点：原点 + 所有递归子级整体移入 Waypoints 集合（保持父子结构，不动变换）——
+        # —— 航路原点：遍历场景所有物体（不限集合），原点 + 所有递归子级整体移入 Waypoints 集合 ——
+        # 航路原点与普通组件硬点不同，无论当前在哪个集合，统一归入 Waypoints（保持父子结构，不动变换）
         wp_subtree = set()
-        for o in root_objs:
+        for o in list(bpy.data.objects):
             if o.get("x4_wp_origin"):
                 subtree = [o] + list(o.children_recursive)
                 for obj in subtree:
@@ -3595,19 +3596,21 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
         if context.active_object and context.active_object.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
 
-        base_name = settings.wp_base_name
         s_size = settings.wp_s_size
         m_length = settings.wp_m_length
         m_width = settings.wp_m_width
         m_height = settings.wp_m_height
         default_size = settings.wp_default_size
 
-        # 清除已有对象（先于原点处理，避免重命名后的原点被误删）
+        # 清除已有航路物体：按标记属性删除（x4_wp_origin 原点 + hardpoint_type 子级），
+        # 不再按名称前缀匹配（子对象名来自 XML，不一定含 "waypoint"）。
+        # 保留用户通过 wp_origin_empty 指定的原点，只清其子级。
         if settings.wp_clear_existing:
+            user_origin = settings.wp_origin_empty
             for obj in list(context.scene.objects):
-                if (obj.name.startswith(base_name) or
-                        obj.name.startswith("XU_Waypoint") or
-                        "dockingbay" in obj.name.lower()):
+                if obj == user_origin:
+                    continue
+                if obj.get("x4_wp_origin") or obj.get("hardpoint_type"):
                     bpy.data.objects.remove(obj, do_unlink=True)
 
         # 原点空物体：组件空间原点。导入的航路点/泊位作为其子级摆放，
@@ -3623,6 +3626,11 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             origin.name = prefix + file_base
         # 标记为航路原点：供场景整理等功能识别并跳过（不把子级航路点当作组件硬点处理）
         origin["x4_wp_origin"] = True
+
+        # 子对象归入与原点相同的集合（保持集合归属一致，便于场景整理整体归类）。
+        # 若原点未 link 到任何集合，则用场景根集合。
+        origin_cols = origin.users_collection
+        wp_target_col = origin_cols[0] if origin_cols else context.scene.collection
 
         # 加载 XML
         try:
@@ -3713,7 +3721,7 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             obj.parent = origin
             obj.matrix_parent_inverse = Matrix.Identity(4)  # 世界=原点+偏移，局部=组件空间
             obj.location = location
-            context.scene.collection.objects.link(obj)
+            wp_target_col.objects.link(obj)
 
             for tag in tags:
                 if tag:
@@ -3772,7 +3780,7 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             obj.parent = origin
             obj.matrix_parent_inverse = Matrix.Identity(4)  # 世界=原点+偏移，局部=组件空间
             obj.location = location
-            context.scene.collection.objects.link(obj)
+            wp_target_col.objects.link(obj)
 
             _set_dockingbay_size(obj, name)
 
