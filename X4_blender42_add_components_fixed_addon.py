@@ -59,7 +59,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 62),  # 航路编辑器：集合→原点空物体（组件空间），导入子级/导出按原点过滤；前缀默认waypoints_，无前缀自动补前缀+文件名
+    "version": (9, 16, 63),  # 场景整理兼容航路原点空物体：导入时标记 x4_wp_origin，整理时跳过避免误归入 Connections/Empties
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3290,8 +3290,8 @@ class COMPONENT_OT_organize_scene(bpy.types.Operator):
         meshes = []       # 网格物体 → Mesh / Collisions
         lights = []       # 灯光 → Lights
         for o in root_objs:
-            # 排除航点（有 hardpoint_type）和预览体（有 x4_preview_of 或名称含"预览"）
-            if o.get("hardpoint_type"):
+            # 排除航点（有 hardpoint_type）、航路原点空物体（有 x4_wp_origin）和预览体（有 x4_preview_of 或名称含"预览"）
+            if o.get("hardpoint_type") or o.get("x4_wp_origin"):
                 continue
             if o.get("x4_preview_of") or "预览" in o.name:
                 continue
@@ -3605,6 +3605,8 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             context.scene.collection.objects.link(origin)
         elif not origin.name.startswith(prefix):
             origin.name = prefix + file_base
+        # 标记为航路原点：供场景整理等功能识别并跳过（不把子级航路点当作组件硬点处理）
+        origin["x4_wp_origin"] = True
 
         # 加载 XML
         try:
