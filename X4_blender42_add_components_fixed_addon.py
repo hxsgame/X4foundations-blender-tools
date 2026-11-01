@@ -59,7 +59,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 63),  # 场景整理兼容航路原点空物体：导入时标记 x4_wp_origin，整理时跳过避免误归入 Connections/Empties
+    "version": (9, 16, 64),  # 场景整理：航路原点+子树整体归入 Waypoints 集合（保持父子结构），不再跳过
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3286,12 +3286,36 @@ class COMPONENT_OT_organize_scene(bpy.types.Operator):
         # （避免覆盖 ego 工具放入 Hulls 等集合的物体分类）
         scene_col = scene.collection
         root_objs = list(scene_col.objects)
+
+        # 预建顶层集合：Mesh / Collisions / Lights / Waypoints
+        _org_get_or_create_collection("Mesh")
+        _org_get_or_create_collection("Collisions")
+        _org_get_or_create_collection("Lights")
+        _org_get_or_create_collection("Waypoints")
+
+        moved = 0
+        used_cols = set()
+
+        # —— 航路原点：原点 + 所有递归子级整体移入 Waypoints 集合（保持父子结构，不动变换）——
+        wp_subtree = set()
+        for o in root_objs:
+            if o.get("x4_wp_origin"):
+                subtree = [o] + list(o.children_recursive)
+                for obj in subtree:
+                    _org_move_to_collection(obj, "Waypoints")
+                    wp_subtree.add(obj)
+                moved += len(subtree)
+                used_cols.add("Waypoints")
+
         hardpoints = []   # 空物体硬点
         meshes = []       # 网格物体 → Mesh / Collisions
         lights = []       # 灯光 → Lights
         for o in root_objs:
-            # 排除航点（有 hardpoint_type）、航路原点空物体（有 x4_wp_origin）和预览体（有 x4_preview_of 或名称含"预览"）
-            if o.get("hardpoint_type") or o.get("x4_wp_origin"):
+            # 跳过已归入 Waypoints 的航路原点子树
+            if o in wp_subtree:
+                continue
+            # 排除独立航点（有 hardpoint_type 但不属于航路子树）和预览体
+            if o.get("hardpoint_type"):
                 continue
             if o.get("x4_preview_of") or "预览" in o.name:
                 continue
@@ -3302,23 +3326,15 @@ class COMPONENT_OT_organize_scene(bpy.types.Operator):
             elif o.type == 'LIGHT':
                 lights.append(o)
 
-        if not (hardpoints or meshes or lights):
+        if not (hardpoints or meshes or lights or moved):
             self.report({'WARNING'}, t("ERROR_NO_HARDPOINTS_ORG"))
             return {'CANCELLED'}
-
-        # 预建顶层集合：Mesh / Collisions / Lights / Waypoints / Hulls
-        _org_get_or_create_collection("Mesh")
-        _org_get_or_create_collection("Collisions")
-        _org_get_or_create_collection("Lights")
 
         # 预建 Groups、Empties 及其已知类型子集合（按约定顺序）
         groups_col = _org_get_or_create_collection("Groups", parent=connections_col)
         empties_col = _org_get_or_create_collection("Empties", parent=connections_col)
         for sub_name in _ORGANIZE_EMPTIES_SUBS:
             _org_get_or_create_collection(sub_name, parent=empties_col)
-
-        moved = 0
-        used_cols = set()
 
         # —— 空物体硬点：有组名→Groups/{组名}；无组名→按类型分 ——
         for obj in hardpoints:
