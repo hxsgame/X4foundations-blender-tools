@@ -59,7 +59,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 65),  # 导入修复：clear-existing 按标记属性删除（不再按名称前缀）；子对象归入原点所在集合（保持集合归属一致）
+    "version": (9, 16, 66),  # 工程重构：抽公共函数（_write_hardpoint_attrs/wp_name_split_join/角色判定/坐标转换/TrackTo/法向轴编解码）、统一集合归属、预览改 hint 表、dockingbay 尺寸改属性；删除死字段 wp_base_name
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -1118,9 +1118,9 @@ def _poll_origin_empty(self, obj):
 
 
 def _poll_prefixed_origin(self, obj):
-    """PointerProperty 过滤：只列出带原点前缀的空物体（导出时选哪个停靠区的原点）。"""
-    prefix = (self.wp_origin_prefix or "waypoints_").strip()
-    return obj.type == 'EMPTY' and obj.name.startswith(prefix)
+    """PointerProperty 过滤：只列出带 x4_wp_origin 标记的空物体（导出时选哪个停靠区的原点）。
+    用标记属性而非名称前缀，避免用户手动改名后被过滤掉。"""
+    return obj.type == 'EMPTY' and bool(obj.get("x4_wp_origin"))
 
 
 
@@ -1297,12 +1297,6 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         type=bpy.types.Object,
         poll=_poll_origin_empty,
         description=t("WP_ORIGIN_EMPTY_DESC")
-    )
-
-    wp_base_name: bpy.props.StringProperty(
-        name=t("WP_BASE_NAME"),
-        default="waypoint",
-        description=t("WP_BASE_NAME_DESC")
     )
 
     wp_name_group: bpy.props.StringProperty(
@@ -2363,31 +2357,15 @@ class COMPONENT_OT_placer(bpy.types.Operator):
         """创建组件对象"""
         empty_obj = bpy.data.objects.new(name, None)
         empty_obj.empty_display_type = settings.empty_display_mode  # 面板可选，默认箭头
-        # 显示尺寸 = 法向轴之外另两轴的最长轴值 ÷ 2（empty_display_size 是半径语义）
-        _others = [v for letter, v in zip('XYZ', settings.comp_size) if letter != settings.align_axis[0]]
-        empty_obj.empty_display_size = max(_others) / 2
 
-        # 自定义属性：记录轴向设置与预设尺寸（镜像继承、显示与导出核对用）
-        # v9.13.5：法向轴记录统一带符号（'Z'→'Z+'）；读取端规则"带-为负、否则为正"，兼容旧记录 'Z'
-        _align = settings.align_axis
-        empty_obj["x4_axis_normal"] = _align if _align.endswith('-') else _align + '+'
-        empty_obj["x4_axis_forward"] = settings.forward_axis
-        # 向上轴仅在"法向轴与朝向轴同轴"时生效，禁用时记录空值避免残留（法向轴六向后按轴字母比较，v9.13.2）
-        empty_obj["x4_axis_up"] = settings.up_axis if settings.forward_axis[0] == settings.align_axis[0] else ""
-        empty_obj["x4_comp_size"] = list(settings.comp_size)
-        empty_obj["x4_comp_name"] = settings.name_base  # 组件名称段（如 turret_l，不拼接组名/key，v9.14.1）
-        # 轴常显标记：由 GPU 覆盖层按 empty_display_size 画三色局部轴（任意模式可见，无需选中）
-        empty_obj["x4_axis_show"] = True
+        # 写入尺寸/组件名/朝向轴等自定义属性 + 重算显示尺寸（放置与维护共用）
+        _write_hardpoint_attrs(empty_obj, settings)
 
         empty_obj.location = position
         empty_obj.rotation_euler = rotation
 
-        # 若已执行过"整理场景"，自动归入对应 Connections 集合（按类型+组名）；否则放场景根集合
-        target_col_name = _resolve_organize_collection(settings.name_base, settings.name_group)
-        if target_col_name and target_col_name in bpy.data.collections:
-            bpy.data.collections[target_col_name].objects.link(empty_obj)
-        else:
-            context.scene.collection.objects.link(empty_obj)
+        # 归入合适的集合（已建立 Connections 层级则归入对应类型集合，否则场景根）
+        _link_to_appropriate_collection(empty_obj, "comp", settings)
 
         # 存储局部轴的世界方向信息用于平移（与旋转矩阵列向量一致）
         empty_obj["face_normal"] = tuple(axis_data[2])
@@ -2505,8 +2483,7 @@ class COMPONENT_OT_batch_move(bpy.types.Operator):
                     continue
                 recorded = obj.get("x4_axis_normal", "")
                 if recorded:
-                    letter = recorded[0]
-                    sign = -1.0 if recorded.endswith('-') else 1.0
+                    letter, sign = _decode_normal_axis(recorded)
                 else:
                     letter, sign = 'Z', 1.0  # 无记录的老硬点按默认 Z+ 处理
                     fallback_count += 1
@@ -2787,6 +2764,40 @@ class COMPONENT_OT_apply_display_mode(bpy.types.Operator):
 
 # ============================ 膨胀/收缩（舰船整体缩放时硬点跟随） ============================
 
+def _encode_normal_axis(align):
+    """把面板 align_axis（如 'Z' 或 'Z-'）编码为带符号记录（'Z+' / 'Z-'）。"""
+    return align if align.endswith('-') else align + '+'
+
+
+def _decode_normal_axis(recorded):
+    """把带符号记录（'Z+' / 'Z-'，兼容旧记录 'Z'）解码为 (letter, sign)。"""
+    letter = recorded[0] if recorded else 'Z'
+    sign = -1.0 if recorded.endswith('-') else 1.0
+    return letter, sign
+
+
+def _write_hardpoint_attrs(obj, settings):
+    """写入组件硬点的自定义属性（尺寸、组件名、朝向轴等），放置与维护共用。
+    同时按放置规则重算 empty_display_size（法向轴之外另两轴最长值 ÷ 2）。
+    不写 face_normal/x_axis/y_axis/base_position（仅放置时的平移参考）。"""
+    obj["x4_comp_size"] = list(settings.comp_size)
+    obj["x4_comp_name"] = settings.name_base  # 组件名称段（如 turret_l，不拼接组名/key）
+    # 组件类型几何 hint（预览用）：按 name_base 前缀匹配 COMPONENT_TYPE_HINTS
+    _cn_lower = (settings.name_base or "").lower()
+    _hint = next((h for k, h in COMPONENT_TYPE_HINTS.items() if _cn_lower.startswith(k)), {})
+    obj["x4_comp_hint"] = _hint
+    obj["x4_axis_normal"] = _encode_normal_axis(settings.align_axis)
+    obj["x4_axis_forward"] = settings.forward_axis
+    # 向上轴仅在"法向轴与朝向轴同轴"时生效，禁用时记录空值避免残留
+    obj["x4_axis_up"] = settings.up_axis if settings.forward_axis[0] == settings.align_axis[0] else ""
+    # 轴常显标记：缺失时补上（放置的新物体必然缺失→开启；存量已有关闭的不覆盖）
+    if "x4_axis_show" not in obj:
+        obj["x4_axis_show"] = True
+    # 显示尺寸 = 法向轴之外另两轴的最长轴值 ÷ 2（empty_display_size 是半径语义）
+    _others = [v for letter, v in zip('XYZ', settings.comp_size) if letter != settings.align_axis[0]]
+    obj.empty_display_size = max(_others) / 2
+
+
 def _get_comp_key(context):
     """读取当前组件key（膨胀/收缩等按名称识别硬点的功能使用）；空值返回 None 并由调用方提示"""
     settings = getattr(context.scene, "component_settings_fixed", None)
@@ -2886,6 +2897,51 @@ _PREVIEW_OF_PROP = "x4_preview_of"  # 预览体上记录所属空物体名称的
 
 _preview_cube_mesh = None  # 共享 2×2×2 立方体网格缓存（所有预览体缩放引用同一份数据）
 
+# 组件类型几何 hint（放置时写入 x4_comp_hint，预览时读取，避免按名称子串硬编码）
+# swap_xy: 预览时交换 X/Y 尺寸（如护盾长轴沿局部 Y）
+# offset_sign: 预览盒沿法向轴的偏移方向（dockarea 沉在面内侧→-1）
+COMPONENT_TYPE_HINTS = {
+    "shield":   {"swap_xy": True,  "offset_sign": 1.0},
+    "dockarea": {"swap_xy": False, "offset_sign": -1.0},
+}
+
+
+# ============================ 物体角色判定（统一识别，避免各处散落判断） ============================
+# 角色优先级：wp_origin > wp_child > preview > comp > other
+# 所有需要区分"组件硬点 / 航路原点 / 航路子级 / 预览体"的地方都应走这套函数。
+
+def is_wp_origin(obj):
+    """航路原点空物体（x4_wp_origin 标记）"""
+    return bool(obj.get("x4_wp_origin"))
+
+
+def is_wp_child(obj):
+    """航路子级（waypoint / dockingbay，靠 hardpoint_type 识别）"""
+    return obj.get("hardpoint_type") in ("waypoint", "dockingbay")
+
+
+def is_preview(obj):
+    """预览体（x4_preview_of 属性，或名称含"预览"的老数据回退）"""
+    return obj.get(_PREVIEW_OF_PROP) is not None or "预览" in obj.name
+
+
+def is_hardpoint_comp(obj):
+    """组件硬点空物体（x4_comp_name 属性）"""
+    return obj.type == 'EMPTY' and obj.get("x4_comp_name") is not None
+
+
+def object_role(obj):
+    """返回物体角色字符串。优先级：wp_origin > wp_child > preview > comp > other。"""
+    if is_wp_origin(obj):
+        return "wp_origin"
+    if is_wp_child(obj):
+        return "wp_child"
+    if is_preview(obj):
+        return "preview"
+    if is_hardpoint_comp(obj):
+        return "comp"
+    return "other"
+
 
 def _get_preview_cube_mesh():
     """获取（或创建）共享的 2×2×2 立方体网格，预览体通过缩放得到目标尺寸"""
@@ -2927,6 +2983,12 @@ class COMPONENT_OT_preview_show(bpy.types.Operator):
         refreshed = 0
         no_size = 0
         mesh = _get_preview_cube_mesh()
+        # 预建预览体归属字典（owner_name -> preview_obj），避免每个选中物体都全场景扫描
+        preview_map = {}
+        for o in context.scene.objects:
+            owner = o.get(_PREVIEW_OF_PROP)
+            if owner is not None:
+                preview_map[owner] = o
         for obj in context.selected_objects:
             if obj.type != 'EMPTY':
                 continue
@@ -2935,7 +2997,7 @@ class COMPONENT_OT_preview_show(bpy.types.Operator):
                 no_size += 1  # 老硬点先用"维护硬点属性"补齐尺寸记录
                 continue
             # 已有预览则复用并刷新尺寸/位置；没有则新建——避免"改了尺寸还得先去除再预览"的重复操作
-            preview = next((o for o in context.scene.objects if o.get(_PREVIEW_OF_PROP) == obj.name), None)
+            preview = preview_map.get(obj.name)
             if preview is not None:
                 # 防止父级被手动改过或重名导致归属错位，重新绑定父级
                 if preview.parent != obj:
@@ -2956,24 +3018,29 @@ class COMPONENT_OT_preview_show(bpy.types.Operator):
                 preview.parent = obj  # 父级跟随：空物体平移/旋转时预览同步
                 preview.matrix_parent_inverse = Matrix.Identity(4)
                 preview[_PREVIEW_OF_PROP] = obj.name  # 反查归属，供去除实体化定位
-                context.collection.objects.link(preview)
+                _link_to_appropriate_collection(preview, "preview")
                 created += 1
             _comp_name = str(obj.get("x4_comp_name", "")).lower()
             _size = list(size)
-            # 护盾（shield）特例：预设尺寸按 (长, 厚, 高) 记在 xyz，实体长轴应沿局部 Y（+Y 同向），
-            # 预览时交换 X/Y 两轴长度
-            if "shield" in _comp_name or "shield" in obj.name.lower():
+            # 组件类型几何 hint：优先读 x4_comp_hint（放置时写入），老数据回退按名称匹配
+            hint = obj.get("x4_comp_hint")
+            if hint is None:
+                cn = _comp_name or obj.name.lower()
+                hint = {}
+                if "shield" in cn:
+                    hint["swap_xy"] = True
+                if "dockarea" in cn:
+                    hint["offset_sign"] = -1.0
+            # 护盾（shield）：预设尺寸按 (长, 厚, 高) 记在 xyz，实体长轴沿局部 Y，预览交换 X/Y
+            if hint.get("swap_xy"):
                 _size[0], _size[1] = _size[1], _size[0]
             preview.scale = (_size[0] / 2.0, _size[1] / 2.0, _size[2] / 2.0)  # 2m 立方体 → 目标 xyz 尺寸
-            # 原点贴接触面（v9.14.3）：X4 语义下组件原点在连接面、组件沿法线方向生长，
+            # 原点贴接触面：X4 语义下组件原点在连接面、组件沿法线方向生长，
             # 故预览盒沿"记录的法向轴×符号"偏移半个法向尺寸，使底面贴住硬点原点而非居中
             recorded = obj.get("x4_axis_normal", "")
-            _letter = recorded[0] if recorded else 'Z'  # 无记录回退 Z+
-            _sign = -1.0 if recorded.endswith('-') else 1.0
-            # 机坪（dockarea）特例：X4 机坪主体沉在连接面内侧（负法线方向），
-            # 与普通组件"沿法线生长"相反——预览盒反向偏移，画在面下方
-            if "dockarea" in _comp_name or "dockarea" in obj.name.lower():
-                _sign = -_sign
+            _letter, _sign = _decode_normal_axis(recorded)  # 无记录回退 Z+
+            # 机坪（dockarea）：主体沉在连接面内侧（负法线方向），预览盒反向偏移
+            _sign *= hint.get("offset_sign", 1.0)
             _idx = {'X': 0, 'Y': 1, 'Z': 2}[_letter]
             _loc = [0.0, 0.0, 0.0]
             _loc[_idx] = _sign * _size[_idx] / 2.0
@@ -3016,24 +3083,13 @@ class COMPONENT_OT_preview_hide(bpy.types.Operator):
 
 
 def _maintain_one_hardpoint(obj, settings):
-    """对单个物体执行属性维护（v9.15.0 抽取，选中模式与筛选模式共用）。
+    """对单个物体执行属性维护（选中模式与筛选模式共用）。
     返回 'added'（无属性补齐）/ 'updated'（已有更新）/ 'skipped'（非空物体）"""
     if obj.type != 'EMPTY':
         return 'skipped'
     had_size = "x4_comp_size" in obj
-    obj["x4_comp_size"] = list(settings.comp_size)
-    obj["x4_comp_name"] = settings.name_base  # 组件名称段（如 turret_l，不拼接组名/key，v9.14.1）
-    # 法向轴记录统一带符号（'Z'→'Z+'），读取端兼容旧记录 'Z'（v9.13.5）
-    _align = settings.align_axis
-    obj["x4_axis_normal"] = _align if _align.endswith('-') else _align + '+'
-    obj["x4_axis_forward"] = settings.forward_axis
-    # 向上轴仅在"法向轴与朝向轴同轴"时生效（与放置逻辑一致，禁用不残留；按轴字母比较，v9.13.2）
-    obj["x4_axis_up"] = settings.up_axis if settings.forward_axis[0] == settings.align_axis[0] else ""
-    if "x4_axis_show" not in obj:
-        obj["x4_axis_show"] = True  # 缺失时补上，三色轴常显立即可用
-    # 显示尺寸同步重算：法向轴之外另两轴的最长轴值 ÷ 2（同放置，半径语义，v9.14.0）
-    _others = [v for letter, v in zip('XYZ', settings.comp_size) if letter != settings.align_axis[0]]
-    obj.empty_display_size = max(_others) / 2
+    # 写入尺寸/组件名/朝向轴等自定义属性 + 重算显示尺寸（与放置共用同一函数）
+    _write_hardpoint_attrs(obj, settings)
     return 'updated' if had_size else 'added'
 
 
@@ -3256,6 +3312,36 @@ def _resolve_organize_collection(comp_type, group_name=""):
     return parent_col.name
 
 
+def _link_to_appropriate_collection(obj, role, settings=None):
+    """按物体角色把 obj link 到合适的集合（新建物体的统一入口）。
+    - comp：归入 Connections 下对应类型集合（已存在则归入，否则场景根）
+    - wp_origin / wp_child：归入 Waypoints（已存在则归入，否则场景根）
+    - preview：跟随父级所在集合，否则当前活动集合
+    - other：场景根
+    航路导入的"子级跟随原点所在集合"由调用方用 prefer_collection 覆盖。"""
+    scene = bpy.context.scene
+    if role == "comp" and settings is not None:
+        target = _resolve_organize_collection(settings.name_base, settings.name_group)
+        if target and target in bpy.data.collections:
+            bpy.data.collections[target].objects.link(obj)
+            return
+        scene.collection.objects.link(obj)
+    elif role in ("wp_origin", "wp_child"):
+        wp_col = bpy.data.collections.get("Waypoints")
+        if wp_col is not None:
+            wp_col.objects.link(obj)
+        else:
+            scene.collection.objects.link(obj)
+    elif role == "preview":
+        parent_cols = obj.parent.users_collection if obj.parent else []
+        if parent_cols:
+            parent_cols[0].objects.link(obj)
+        else:
+            bpy.context.collection.objects.link(obj)
+    else:
+        scene.collection.objects.link(obj)
+
+
 def _org_sort_children_by_order(parent_col, order_list):
     """按 order_list 的顺序重排 parent_col 下的子集合（不在列表中的追加到末尾）。"""
     existing = list(parent_col.children.keys())
@@ -3315,10 +3401,9 @@ class COMPONENT_OT_organize_scene(bpy.types.Operator):
             # 跳过已归入 Waypoints 的航路原点子树
             if o in wp_subtree:
                 continue
-            # 排除独立航点（有 hardpoint_type 但不属于航路子树）和预览体
-            if o.get("hardpoint_type"):
-                continue
-            if o.get("x4_preview_of") or "预览" in o.name:
+            # 排除航路子级（有 hardpoint_type 但不属于航路子树）和预览体（统一角色判定）
+            role = object_role(o)
+            if role in ("wp_child", "preview"):
                 continue
             if o.type == 'EMPTY':
                 hardpoints.append(o)
@@ -3664,15 +3749,24 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
                 self.report({'ERROR'}, t("WP_IMPORT_ERR_DASH3", n, sep))
             return {'CANCELLED'}
 
-        def _x4_to_blender(x, y, z):
-            return Vector((x, z, y))
+        # 坐标转换用模块级 x4_to_blender_pos
 
         def _set_dockingbay_size(obj, name):
-            name_lower = name.lower()
-            if '_s_' in name_lower:
+            """按尺寸级别设置 dockingbay 显示尺寸。
+            优先读 x4_db_size 属性（导入时从名称解析），回退按名称子串匹配（兼容老数据）。"""
+            size_level = obj.get("x4_db_size")
+            if not size_level:
+                name_lower = name.lower()
+                if '_s_' in name_lower:
+                    size_level = "s"
+                elif '_m_' in name_lower:
+                    size_level = "m"
+                else:
+                    size_level = "default"
+            if size_level == "s":
                 obj.empty_display_size = s_size
                 obj.scale = (1.0, 1.0, 1.0)
-            elif '_m_' in name_lower:
+            elif size_level == "m":
                 obj.empty_display_size = 1.0
                 obj.scale = (m_width, m_length, m_height)
             else:
@@ -3683,17 +3777,9 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
         waypoint_links = {}
 
         # 硬点类型识别：名称含 dockingbay/waypoint 自动判定，看不出来按用户指定类型
-        def _detect_hp_type(xml_name, fallback):
-            nl = xml_name.lower()
-            if "dockingbay" in nl:
-                return "dockingbay"
-            if "waypoint" in nl:
-                return "waypoint"
-            return fallback
+        # （用模块级 _detect_hp_type_from_name）
 
-        # 命名：group + 连接符 + name，作为物体名称（sep 已在上方统一定义）
-        def _hp_obj_name(xml_name, group):
-            return f"{group}{sep}{xml_name}" if group else xml_name
+        # 命名：group + 连接符 + name（用模块级 wp_name_join，sep 已在上方统一定义）
 
         # 第一遍：创建所有 waypoint 对象
         for wp in waypoints:
@@ -3705,7 +3791,7 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             x = float(wp.get("x", 0))
             y = float(wp.get("y", 0))
             z = float(wp.get("z", 0))
-            location = _x4_to_blender(x, y, z)
+            location = x4_to_blender_pos(x, y, z)
 
             if "start" in tags:
                 empty_type = 'SPHERE'
@@ -3714,7 +3800,7 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             else:
                 empty_type = 'CONE'
 
-            obj_name = _hp_obj_name(name, group)
+            obj_name = wp_name_join(group, name, sep)
             obj = bpy.data.objects.new(obj_name, None)
             obj.empty_display_size = default_size
             obj.empty_display_type = empty_type
@@ -3731,7 +3817,7 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             # 分组名（游戏靠 group 属性把 dockpath 绑定到泊位 dockingbay）
             obj["group"] = group
             # 硬点类型（waypoint / dockingbay）
-            obj["hardpoint_type"] = _detect_hp_type(name, settings.wp_default_hp_type)
+            obj["hardpoint_type"] = _detect_hp_type_from_name(name, settings.wp_default_hp_type)
             # 车道朝向：按 XML 四元数推断（原版规律：qy≈±1 绕竖直轴 180° = 出站道，qw≈±1 恒等 = 进站道）
             qy = float(wp.get("qy", 0))
             qw = float(wp.get("qw", 1))
@@ -3771,9 +3857,9 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             x = float(position_elem.get("x", 0))
             y = float(position_elem.get("y", 0))
             z = float(position_elem.get("z", 0))
-            location = _x4_to_blender(x, y, z)
+            location = x4_to_blender_pos(x, y, z)
 
-            obj_name = _hp_obj_name(name, group)
+            obj_name = wp_name_join(group, name, sep)
             obj = bpy.data.objects.new(obj_name, None)
             obj.empty_display_type = 'CUBE'
             obj.empty_display_size = 1.0
@@ -3782,13 +3868,16 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             obj.location = location
             wp_target_col.objects.link(obj)
 
+            # 尺寸级别从名称解析后存入属性，_set_dockingbay_size 优先读属性（不再依赖名称子串）
+            _nl = name.lower()
+            obj["x4_db_size"] = "s" if '_s_' in _nl else ("m" if '_m_' in _nl else "default")
             _set_dockingbay_size(obj, name)
 
             for tag in conn.get("tags", "").split():
                 if tag:
                     obj[tag] = True
             # dockingbay 只记类型与组名（模型相关，不修改名称和数量，后续只更新 group）
-            obj["hardpoint_type"] = _detect_hp_type(name, "dockingbay")
+            obj["hardpoint_type"] = _detect_hp_type_from_name(name, "dockingbay")
             obj["group"] = group
 
         # 官方 ego 方式：物体旋转保持 0；对每个 link 创建一个 Track To 约束（追踪轴 Y，向上 X）
@@ -3801,14 +3890,28 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
                 target_obj = waypoint_objects.get(target_name)
                 if target_obj is None:
                     continue
-                constraint = source_obj.constraints.new(type='TRACK_TO')
-                constraint.target = target_obj
-                constraint.track_axis = 'TRACK_Y'
-                constraint.up_axis = 'UP_X'
+                _add_track_to_constraint(source_obj, target_obj)
                 constraint_count += 1
 
         self.report({'INFO'}, t("WP_INFO_IMPORTED", len(waypoints), len(dockingbay_connections), constraint_count))
         return {'FINISHED'}
+
+
+# ============================ 航路命名工具（group + sep + base） ============================
+# 命名约定：{group}{sep}{base}，sep 默认 ---；不含 sep 视为无分组（group=""）。
+# waypoint 的 group/base 含 sep 时由调用方替换为 '_'；dockingbay 含 sep 由调用方报错。
+
+def wp_name_split(name, sep):
+    """把航路硬点名拆为 (group, base)；不含 sep 则 group=""。"""
+    if sep and sep in name:
+        group, base = name.split(sep, 1)
+        return group, base
+    return "", name
+
+
+def wp_name_join(group, base, sep):
+    """拼接航路硬点名：{group}{sep}{base}；group 为空则只返回 base。"""
+    return f"{group}{sep}{base}" if group else base
 
 
 # ============================ Waypoint 词汇表（与 x4_wp_export.py 一致） ============================
@@ -3832,6 +3935,24 @@ WP_TAG_CATEGORIES = [
 # Blender Z-up → X4 Y-up 的坐标换算常量（与 x4_wp_export.py 完全一致）
 _WP_C = Quaternion((0.70710678, -0.70710678, 0.0, 0.0))
 _WP_C_INV = _WP_C.inverted()
+
+
+def x4_to_blender_pos(x, y, z):
+    """X4 (x,y,z) → Blender 局部坐标 (x, z, y)（Y-up → Z-up 交换 y/z）。"""
+    return Vector((x, z, y))
+
+
+def blender_to_x4_pos(p):
+    """Blender 坐标 (Vector) → X4 (x, y, z)，x4_to_blender_pos 的逆映射。"""
+    return p.x, p.z, p.y
+
+
+def blender_to_x4_quat(q):
+    """Blender 四元数 → X4 四元数（绕 X 轴 -90° 共轭变换），并规范化 qw>=0。"""
+    qq = _WP_C @ q @ _WP_C_INV
+    if qq.w < 0:
+        qq.negate()
+    return qq
 
 
 def _wp_fmt(v):
@@ -3867,6 +3988,15 @@ def _sync_wp_tag_props(obj):
             obj[tg] = True
 
 
+def _add_track_to_constraint(obj, target):
+    """为 obj 添加一个指向 target 的 Track To 约束（TRACK_Y / UP_X，与 ego 官方一致）。"""
+    constraint = obj.constraints.new(type='TRACK_TO')
+    constraint.target = target
+    constraint.track_axis = 'TRACK_Y'
+    constraint.up_axis = 'UP_X'
+    return constraint
+
+
 def _sync_wp_constraints(obj):
     """按 links 字符串重建 Track To 约束（TRACK_Y / UP_X），与导入逻辑一致"""
     # 先清除已有的 Track To 约束（避免重复/过时）
@@ -3878,10 +4008,7 @@ def _sync_wp_constraints(obj):
         target = bpy.data.objects.get(name)
         if target is None:
             continue
-        constraint = obj.constraints.new(type='TRACK_TO')
-        constraint.target = target
-        constraint.track_axis = 'TRACK_Y'
-        constraint.up_axis = 'UP_X'
+        _add_track_to_constraint(obj, target)
 
 
 class COMPONENT_OT_make_waypoint(bpy.types.Operator):
@@ -3980,7 +4107,7 @@ class COMPONENT_OT_add_waypoint(bpy.types.Operator):
         sep = settings.wp_name_separator or "---"
         group = settings.wp_name_group.strip().replace(sep, "_")
         base_setting = settings.wp_name_base.replace(sep, "_")
-        prefix = (group + sep + base_setting) if group else base_setting
+        prefix = wp_name_join(group, base_setting, sep)
         max_idx = 0
         for o in bpy.data.objects:
             if o.name.startswith(prefix + "_"):
@@ -3999,7 +4126,7 @@ class COMPONENT_OT_add_waypoint(bpy.types.Operator):
         obj["lane"] = "inbound"  # 车道朝向：默认进站道（恒等），出站道导出时转 180°
         _sync_wp_tag_props(obj)
         _apply_wp_display_type(obj)
-        context.scene.collection.objects.link(obj)
+        _link_to_appropriate_collection(obj, "wp_child", settings)
         # 选中新建物体
         for o in context.selected_objects:
             o.select_set(False)
@@ -4023,8 +4150,8 @@ class COMPONENT_OT_apply_wp_group(bpy.types.Operator):
             if obj.get("hardpoint_type") is None and obj.get("tags") is None:
                 continue
             # 只替换名称第一个连接符左侧前缀（即改组），名称其余部分与数量不动
-            base = obj.name.split(sep, 1)[1] if sep in obj.name else obj.name
-            obj.name = f"{group}{sep}{base}" if group else base
+            _, base = wp_name_split(obj.name, sep)
+            obj.name = wp_name_join(group, base, sep)
             obj["group"] = group
             count += 1
         if count == 0:
@@ -4107,6 +4234,17 @@ def _detect_hp_type(obj):
     return "waypoint"
 
 
+def _detect_hp_type_from_name(name, fallback):
+    """从 XML/字符串名称预判硬点类型：含 dockingbay→dockingbay，含 waypoint→waypoint，否则 fallback。
+    用于导入时在物体创建前从 XML name 判定；物体创建后用 _detect_hp_type(obj)。"""
+    nl = name.lower()
+    if "dockingbay" in nl:
+        return "dockingbay"
+    if "waypoint" in nl:
+        return "waypoint"
+    return fallback
+
+
 class COMPONENT_OT_export_waypoints(bpy.types.Operator):
     """导出 waypoint 为 x4_wp_export.py 所需的 XML 格式"""
     bl_idname = "component_fixed.export_waypoints"
@@ -4143,7 +4281,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
         else:
             p = obj.matrix_world.translation
         # 位置：导入 (x, z, y) 的逆映射，与游戏原文件一致（不再 z 取反）
-        x, y, z = p.x, p.z, p.y
+        x, y, z = blender_to_x4_pos(p)
         # 旋转：lane 属性优先——inbound=恒等朝向，outbound=绕竖直轴 180°（原版 dockarea 车道规律：
         # 进站道恒等、回程道 qy=±1/qw≈0，与泊位 offset 四元数互证）；
         # 未设置 lane 时回退到物体实际旋转（rotation_quaternion，Track To 约束不参与导出）
@@ -4152,12 +4290,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
             return x, y, z, 0.0, 0.0, 0.0, 1.0
         if lane == "outbound":
             return x, y, z, 0.0, -1.0, 0.0, 0.0
-        q = obj.rotation_quaternion
-        qq = _WP_C @ q @ _WP_C_INV
-        # 四元数符号规范化：q 与 -q 是同一旋转（双覆盖），统一 qw >= 0 写法
-        #（原版进站道写 qw=-1 是异号残渣，导出统一为 qw=+1，语义相同）
-        if qq.w < 0:
-            qq.negate()
+        qq = blender_to_x4_quat(obj.rotation_quaternion)
         return x, y, z, qq.x, qq.y, qq.z, qq.w
 
     @staticmethod
@@ -4292,7 +4425,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
             if not self._is_hardpoint(o):
                 continue
             hp = _detect_hp_type(o)
-            b = o.name.split(sep, 1)[1] if sep in o.name else o.name
+            _, b = wp_name_split(o.name, sep)
             if hp == "waypoint":
                 b = b.replace(sep, "_")
                 scene_wp_names.add(b)
@@ -4304,10 +4437,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
         resolved = []  # (obj, hp_type, export_name, group)
         for o in objs:
             hp_type = _detect_hp_type(o)
-            if sep in o.name:
-                group_raw, base_raw = o.name.split(sep, 1)
-            else:
-                group_raw, base_raw = "", o.name
+            group_raw, base_raw = wp_name_split(o.name, sep)
             # 旧文件兼容：waypoint 的 group/name 残留连接符自动替换为 _；
             # dockingbay 保持原样，由 _validate 报错让用户处理
             if hp_type == "waypoint":
@@ -4323,7 +4453,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
             tags_str = o.get("tags", "") or ""
             links_str = o.get("links", "") or ""
             # links 里存的是 Blender 物体名（带 group+连接符前缀），按全场景名称表映射回基础名
-            links_list = [scene_map.get(ln, name_map.get(ln, ln.split(sep, 1)[1] if sep in ln else ln))
+            links_list = [scene_map.get(ln, name_map.get(ln, wp_name_split(ln, sep)[1]))
                           for ln in links_str.split() if ln]
             pos_rot = self._convert(o, origin)
             wps.append((hp_type, export_name, group, tags_str, links_list, pos_rot))
@@ -4623,7 +4753,6 @@ class COMPONENT_FIXED_PT_waypoint_panel(bpy.types.Panel):
         box.prop(settings, "wp_origin_prefix")
         box.prop(settings, "wp_origin_empty")
 
-        box.prop(settings, "wp_base_name")
         box.prop(settings, "wp_clear_existing")
         box.prop(settings, "wp_default_hp_type")
 
