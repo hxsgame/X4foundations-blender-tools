@@ -3,6 +3,7 @@ import bmesh
 import json
 import math
 import os
+import re
 import numpy as np
 import xml.etree.ElementTree as ET
 from mathutils import Vector, Matrix, Quaternion
@@ -59,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 66),  # 工程重构：抽公共函数（_write_hardpoint_attrs/wp_name_split_join/角色判定/坐标转换/TrackTo/法向轴编解码）、统一集合归属、预览改 hint 表、dockingbay 尺寸改属性；删除死字段 wp_base_name
+    "version": (9, 16, 67),  # 二轮工程清理：统一 is_wp_child 语义（含 tags 兜底）、make_waypoint 跳过组件硬点、清理局部 import、全局 flag 统一为 bool+global
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -1109,7 +1110,7 @@ def _save_scale_ego_dir(path):
         pass
 
 
-_scale_ego_updating = type("_Flag", (), {"flag": False})()  # ego 路径 update 回调的递归保护
+_scale_ego_updating = False  # ego 路径 update 回调的递归保护（与 _spacing_updating 统一为 bool）
 
 
 def _poll_origin_empty(self, obj):
@@ -1129,18 +1130,19 @@ def _update_scale_ego_dir(self, context):
     转成绝对路径再保存，避免相对路径（//）在无 .blend 时解析失败。
     同时把属性值也设为绝对路径，保证面板显示完整路径、保存时可直接用。
     仅保存非空路径，避免清空字段时覆盖已保存的路径。"""
-    if getattr(_scale_ego_updating, "flag", False):
+    global _scale_ego_updating
+    if _scale_ego_updating:
         return
     if not self.scale_ego_dir.strip():
         return
     abs_path = bpy.path.abspath(self.scale_ego_dir)
     _save_scale_ego_dir(abs_path)
     # 把属性设为绝对路径（Blender DIR_PATH 可能转相对，这里强制写回绝对）
-    _scale_ego_updating.flag = True
+    _scale_ego_updating = True
     try:
         self.scale_ego_dir = abs_path
     finally:
-        _scale_ego_updating.flag = False
+        _scale_ego_updating = False
 
 
 def _update_scale_factor(self, context):
@@ -1176,30 +1178,32 @@ _DEFAULT_COMP_NAME_FULL = (
     _DEFAULT_NAME_GROUP + _DEFAULT_NAME_SEPARATOR + _DEFAULT_COMP_KEY + _DEFAULT_NAME_BASE
 )
 
-_COMP_NAME_SYNC = [False]  # 四栏 ↔ 完整名称 双向同步的防循环标记
+_COMP_NAME_SYNC = False  # 四栏 ↔ 完整名称 双向同步的防循环标记
 
 
 def _update_name_parts(self, context):
     """组名/链接符号/组件key/名称 任一栏变化 → 拼接为完整组件名称
     拼接 = 组名 + 链接符 + 组件key + 名称，空栏按空字符串处理"""
-    if _COMP_NAME_SYNC[0]:
+    global _COMP_NAME_SYNC
+    if _COMP_NAME_SYNC:
         return
-    _COMP_NAME_SYNC[0] = True
+    _COMP_NAME_SYNC = True
     try:
         full = f"{self.name_group}{self.name_separator}{self.name_key}{self.name_base}"
         if self.comp_name != full:
             self.comp_name = full
     finally:
-        _COMP_NAME_SYNC[0] = False
+        _COMP_NAME_SYNC = False
 
 
 def _sync_name_parts(self, context):
     """完整组件名称变化（如选择预设写入）→ 只回填名称栏。
     组名/链接符/组件key 是用户自由输入（可含任意字符包括链接符本身），永不反向覆盖：
     仅当 comp_name 以"组名+链接符+key"已知前缀开头时按前缀剥离，否则整体归入名称栏"""
-    if _COMP_NAME_SYNC[0]:
+    global _COMP_NAME_SYNC
+    if _COMP_NAME_SYNC:
         return
-    _COMP_NAME_SYNC[0] = True
+    _COMP_NAME_SYNC = True
     try:
         base = self.comp_name
         prefix = self.name_group + self.name_separator + self.name_key \
@@ -1209,7 +1213,7 @@ def _sync_name_parts(self, context):
         if self.name_base != base:
             self.name_base = base
     finally:
-        _COMP_NAME_SYNC[0] = False
+        _COMP_NAME_SYNC = False
 
 # 预设列表（必须在 MULTI_LANGUAGE_TEXTS 定义之后构建）
 _PRESET_ITEMS = _build_preset_items()
@@ -1511,6 +1515,7 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
 
     def apply_preset(self):
         """应用预设的回调函数"""
+        global _COMP_NAME_SYNC
         # 防止递归调用
         if hasattr(self, '_applying_preset') and self._applying_preset:
             return
@@ -1531,7 +1536,7 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
                 #   key 不得参与组名/链接符的组合条件——key 栏恒有默认值，纳入会导致
                 #   回填永不触发（9.13.0 回归）
                 if comp_name and comp_name.strip() and comp_name not in PLACEHOLDER_COMP_NAMES:
-                    _COMP_NAME_SYNC[0] = True  # 回填期间锁定联动，避免中间态串写
+                    _COMP_NAME_SYNC = True  # 回填期间锁定联动，避免中间态串写
                     try:
                         if not self.name_group.strip() and not self.name_separator.strip():
                             self.name_separator = _DEFAULT_NAME_SEPARATOR
@@ -1539,7 +1544,7 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
                         if not self.name_key.strip():
                             self.name_key = _DEFAULT_COMP_KEY
                     finally:
-                        _COMP_NAME_SYNC[0] = False
+                        _COMP_NAME_SYNC = False
                     base = comp_name.partition("-")[2] or comp_name
                     self.comp_name = f"{self.name_group}{self.name_separator}{self.name_key}{base}"  # 触发反向拆分，四栏同步
 
@@ -2916,8 +2921,10 @@ def is_wp_origin(obj):
 
 
 def is_wp_child(obj):
-    """航路子级（waypoint / dockingbay，靠 hardpoint_type 识别）"""
-    return obj.get("hardpoint_type") in ("waypoint", "dockingbay")
+    """航路子级（waypoint / dockingbay）。
+    识别优先级：hardpoint_type ∈ {waypoint, dockingbay} → 有 tags 属性（老数据兜底）。
+    这是航路子级的唯一判定入口，与导出收集、clear-existing、场景整理语义一致。"""
+    return obj.get("hardpoint_type") in ("waypoint", "dockingbay") or obj.get("tags") is not None
 
 
 def is_preview(obj):
@@ -2959,7 +2966,6 @@ def _get_preview_cube_mesh():
             _preview_cube_mesh = None
             _need_rebuild = True
     if _need_rebuild:
-        import bmesh
         bm = bmesh.new()
         bmesh.ops.create_cube(bm, size=2.0)
         _preview_cube_mesh = bpy.data.meshes.new("X4_HardpointPreviewCube")
@@ -3244,7 +3250,6 @@ def _org_infer_comp_type(obj, settings):
     name = obj.name
     key = settings.name_key or ""
     if key and key in name:
-        import re
         after = name.split(key, 1)[1]
         after = re.sub(r'-\d+$', '', after)
         return after.lower()
@@ -3268,7 +3273,6 @@ def _org_type_to_collection(comp_type):
 def _org_extract_group(name, separator, key):
     """从物体名提取组名。命名约定：[group][sep][key][base]-[NNN]
     找到 [sep][key] 标记则取其前的部分为组名；找不到（名称以 key 开头）则无组名。"""
-    import re
     base = re.sub(r'-\d+$', '', name)
     marker = (separator or "-") + (key or "")
     if marker and marker in base:
@@ -3627,6 +3631,7 @@ class COMPONENT_OT_apply_selected_name(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
+        global _COMP_NAME_SYNC
         settings = context.scene.component_settings_fixed
         selected = context.selected_objects
         if not selected:
@@ -3650,14 +3655,14 @@ class COMPONENT_OT_apply_selected_name(bpy.types.Operator):
         base = strip_sequence_suffix(rest)
 
         # 回填四栏（锁联动，避免中间态串写）
-        _COMP_NAME_SYNC[0] = True
+        _COMP_NAME_SYNC = True
         try:
             settings.name_separator = _DEFAULT_NAME_SEPARATOR
             settings.name_key = _DEFAULT_COMP_KEY
             settings.name_group = group
             settings.name_base = base
         finally:
-            _COMP_NAME_SYNC[0] = False
+            _COMP_NAME_SYNC = False
 
         self.report({'INFO'}, t("INFO_NAME_APPLIED", group, base))
         return {'FINISHED'}
@@ -3695,7 +3700,7 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             for obj in list(context.scene.objects):
                 if obj == user_origin:
                     continue
-                if obj.get("x4_wp_origin") or obj.get("hardpoint_type"):
+                if is_wp_origin(obj) or is_wp_child(obj):
                     bpy.data.objects.remove(obj, do_unlink=True)
 
         # 原点空物体：组件空间原点。导入的航路点/泊位作为其子级摆放，
@@ -4022,7 +4027,12 @@ class COMPONENT_OT_make_waypoint(bpy.types.Operator):
             self.report({'WARNING'}, t("ERROR_NO_SELECTION"))
             return {'CANCELLED'}
         count = 0
+        skipped = 0
         for obj in context.selected_objects:
+            # 组件硬点（有 x4_comp_name）不可转为航点，避免一个物体同时是组件和航点
+            if is_hardpoint_comp(obj):
+                skipped += 1
+                continue
             if "tags" not in obj:
                 obj["tags"] = "typenormal"
             if "links" not in obj:
@@ -4036,6 +4046,8 @@ class COMPONENT_OT_make_waypoint(bpy.types.Operator):
             _sync_wp_tag_props(obj)
             _apply_wp_display_type(obj)
             count += 1
+        if skipped:
+            self.report({'WARNING'}, f"已跳过 {skipped} 个组件硬点（含 x4_comp_name，不可转为航点）")
         self.report({'INFO'}, t("WP_MAKE_WAYPOINT_DONE", count))
         return {'FINISHED'}
 
@@ -4147,7 +4159,7 @@ class COMPONENT_OT_apply_wp_group(bpy.types.Operator):
         group = settings.wp_name_group.strip().replace(sep, "_")
         count = 0
         for obj in context.selected_objects:
-            if obj.get("hardpoint_type") is None and obj.get("tags") is None:
+            if not is_wp_child(obj):
                 continue
             # 只替换名称第一个连接符左侧前缀（即改组），名称其余部分与数量不动
             _, base = wp_name_split(obj.name, sep)
@@ -4252,26 +4264,20 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     @staticmethod
-    def _is_hardpoint(o):
-        return o.get("hardpoint_type") is not None or o.get("tags") is not None
-
-    @staticmethod
     def _collect(context):
         # 收集硬点：优先按「导出原点」过滤（区分多停靠区，原点的所有子级）；
         # 未选原点时退化为选中/全部。返回 (硬点列表, 原点空物体或None)。
+        # 硬点判定统一走 is_wp_child（含 tags 老数据兜底）。
         settings = context.scene.component_settings_fixed
         origin = settings.wp_export_origin
         if origin is not None:
-            objs = [o for o in origin.children_recursive
-                    if COMPONENT_OT_export_waypoints._is_hardpoint(o)]
+            objs = [o for o in origin.children_recursive if is_wp_child(o)]
             return objs, origin
 
-        selected = [o for o in context.selected_objects
-                    if COMPONENT_OT_export_waypoints._is_hardpoint(o)]
+        selected = [o for o in context.selected_objects if is_wp_child(o)]
         if selected:
             return selected, None
-        return [o for o in context.scene.collection.all_objects
-                if COMPONENT_OT_export_waypoints._is_hardpoint(o)], None
+        return [o for o in context.scene.collection.all_objects if is_wp_child(o)], None
 
     @staticmethod
     def _convert(obj, origin):
@@ -4422,7 +4428,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
         scene_map = {}      # 物体名 -> 导出基础名（全场景）
         scene_wp_names = set()  # 全场景 waypoint 导出基础名集合
         for o in context.scene.collection.all_objects:
-            if not self._is_hardpoint(o):
+            if not is_wp_child(o):
                 continue
             hp = _detect_hp_type(o)
             _, b = wp_name_split(o.name, sep)
