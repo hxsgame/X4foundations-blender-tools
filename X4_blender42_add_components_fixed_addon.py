@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 71),  # 放置物体先放场景根再调用 _link_to_appropriate_collection 归入集合；新增预设回填模式 AUTO/MANUAL
+    "version": (9, 16, 72),  # 修复预设回填 bug：AUTO 模式始终用默认值覆盖组名/连接符/key（原条件因默认值非空永不触发）
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -1552,21 +1552,18 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
                 self.comp_size = size
 
                 # 应用非空且非占位的名称（"自定义"预设的 customize 只是内部标记）
-                # 预设名称只取"名称段"；回填规则（v9.13.6 修正）：
-                #   组名与链接符"同时为空"→ 回填该组默认值（9.12.2 起保护"组名空+链接符
-                #   前缀模式"，故两栏作为一组判断）；组件key 单独为空 → 回填默认 key。
-                #   key 不得参与组名/链接符的组合条件——key 栏恒有默认值，纳入会导致
-                #   回填永不触发（9.13.0 回归）
+                # 预设名称只取"名称段"。回填规则（v9.16.71 起）：
+                #   AUTO 模式：始终用默认值覆盖组名/连接符/key
+                #   MANUAL 模式：不回填，保留用户已有值
                 if comp_name and comp_name.strip() and comp_name not in PLACEHOLDER_COMP_NAMES:
-                    # 仅 AUTO 模式回填组名/连接符/key；MANUAL 模式保留用户已有值
+                    # AUTO 模式：始终用默认值覆盖组名/连接符/key（用户已明确选择自动回填）
+                    # MANUAL 模式：不回填，保留用户已有值
                     if self.preset_auto_fill_mode == 'AUTO':
                         _COMP_NAME_SYNC = True  # 回填期间锁定联动，避免中间态串写
                         try:
-                            if not self.name_group.strip() and not self.name_separator.strip():
-                                self.name_separator = _DEFAULT_NAME_SEPARATOR
-                                self.name_group = _DEFAULT_NAME_GROUP
-                            if not self.name_key.strip():
-                                self.name_key = _DEFAULT_COMP_KEY
+                            self.name_separator = _DEFAULT_NAME_SEPARATOR
+                            self.name_group = _DEFAULT_NAME_GROUP
+                            self.name_key = _DEFAULT_COMP_KEY
                         finally:
                             _COMP_NAME_SYNC = False
                     base = comp_name.partition("-")[2] or comp_name
