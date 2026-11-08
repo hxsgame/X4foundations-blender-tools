@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 72),  # 修复预设回填 bug：AUTO 模式始终用默认值覆盖组名/连接符/key（原条件因默认值非空永不触发）
+    "version": (9, 16, 73),  # 审查清理：add_waypoint 也先放场景根再整理；删除 rotate_local/quick_rotate 冗余局部 import math/Matrix
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -2669,8 +2669,6 @@ class COMPONENT_OT_rotate_local(bpy.types.Operator):
     rot_z: bpy.props.FloatProperty(default=0.0)
 
     def execute(self, context):
-        import math
-        from mathutils import Matrix
 
         valid_components = [obj for obj in context.selected_objects
                             if "face_normal" in obj and "x_axis" in obj and "y_axis" in obj]
@@ -2712,8 +2710,6 @@ class COMPONENT_OT_quick_rotate(bpy.types.Operator):
     step: bpy.props.FloatProperty(default=15.0, min=0.1)
 
     def execute(self, context):
-        import math
-        from mathutils import Matrix
 
         valid_components = [obj for obj in context.selected_objects
                             if "face_normal" in obj and "x_axis" in obj and "y_axis" in obj]
@@ -4181,6 +4177,8 @@ class COMPONENT_OT_add_waypoint(bpy.types.Operator):
         obj["lane"] = "inbound"  # 车道朝向：默认进站道（恒等），出站道导出时转 180°
         _sync_wp_tag_props(obj)
         _apply_wp_display_type(obj)
+        # 新物体先放场景根目录，再调用统一整理函数归入合适集合（与 placer/mirror 一致）
+        context.scene.collection.objects.link(obj)
         _link_to_appropriate_collection(obj, "wp_child", settings)
         # 选中新建物体
         for o in context.selected_objects:
