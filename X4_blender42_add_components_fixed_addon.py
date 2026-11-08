@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 68),  # 修复整理舰船网格材质命名：prefix 与 mat_base 之间补 . 分隔符（a.b_a 而非 ab_a）
+    "version": (9, 16, 69),  # 修复整理舰船网格名称冲突：重命名前先释放同名物体/mesh，避免 Blender 自动加 .001 后缀
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3544,7 +3544,13 @@ class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
         else:
             mesh.uv_layers.new(name="uv1")
 
-        # 3. 重命名为 part_main
+        # 3. 重命名为 part_main（先释放可能被残留物体占用的同名，避免 Blender 自动加 .001）
+        for o in list(bpy.data.objects):
+            if o != original_obj and o.name == "part_main":
+                o.name = "part_main_old"
+        for m in list(bpy.data.meshes):
+            if m != original_obj.data and m.name == "part_main":
+                m.name = "part_main_old"
         original_obj.name = "part_main"
         original_obj.data.name = "part_main"
 
@@ -3575,6 +3581,13 @@ class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
         for name, mode, ratio, mats in targets:
             new_obj = original_obj.copy()
             new_obj.data = original_obj.data.copy()
+            # 释放目标名（物体 + mesh data），避免 Blender 自动加 .001
+            for o in list(bpy.data.objects):
+                if o != new_obj and o.name == name:
+                    o.name = name + "_old"
+            for m in list(bpy.data.meshes):
+                if m != new_obj.data and m.name == name:
+                    m.name = name + "_old"
             new_obj.name = name
             new_obj.data.name = name
             col.objects.link(new_obj)
