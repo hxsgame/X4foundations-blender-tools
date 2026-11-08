@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 70),  # 修复整理舰船网格材质 .001：part_main 材质重命名前释放同名、wreck 材质优先复用已有同名
+    "version": (9, 16, 71),  # 放置物体先放场景根再调用 _link_to_appropriate_collection 归入集合；新增预设回填模式 AUTO/MANUAL
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -187,6 +187,12 @@ MULTI_LANGUAGE_TEXTS = {
         "PRESET_SELECTION": "组件预设",
         "PRESET_SELECTION_DESC": "选择预定义的组件尺寸和名称",
         "PRESET_DESC": "尺寸: {0}x{1}x{2}, 组件: {3}",
+        "PRESET_AUTO_FILL_MODE": "预设回填",
+        "PRESET_AUTO_FILL_MODE_DESC": "切换预设时是否自动回填组名/连接符/组件key",
+        "PRESET_AUTO_FILL_AUTO": "自动回填",
+        "PRESET_AUTO_FILL_AUTO_DESC": "组名/连接符为空时自动填入默认值（默认行为）",
+        "PRESET_AUTO_FILL_MANUAL": "手动保留",
+        "PRESET_AUTO_FILL_MANUAL_DESC": "不回填，保留用户已设置的组名/连接符/key",
 
         # 朝向设置
         "ALIGN_AXIS": "法向轴",
@@ -585,6 +591,12 @@ MULTI_LANGUAGE_TEXTS = {
         "PRESET_SELECTION": "Component Preset",
         "PRESET_SELECTION_DESC": "Select predefined component size and name",
         "PRESET_DESC": "Size: {0}x{1}x{2}, Component: {3}",
+        "PRESET_AUTO_FILL_MODE": "Preset Auto-Fill",
+        "PRESET_AUTO_FILL_MODE_DESC": "Whether to auto-backfill group/separator/key when switching presets",
+        "PRESET_AUTO_FILL_AUTO": "Auto Fill",
+        "PRESET_AUTO_FILL_AUTO_DESC": "Backfill defaults when group/separator are empty (default)",
+        "PRESET_AUTO_FILL_MANUAL": "Manual",
+        "PRESET_AUTO_FILL_MANUAL_DESC": "Do not backfill; keep user-set group/separator/key",
 
         # 朝向设置
         "ALIGN_AXIS": "Normal Axis",
@@ -1231,6 +1243,16 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         update=lambda self, context: self.apply_preset()
     )
 
+    preset_auto_fill_mode: bpy.props.EnumProperty(
+        name=t("PRESET_AUTO_FILL_MODE"),
+        description=t("PRESET_AUTO_FILL_MODE_DESC"),
+        items=[
+            ('AUTO', t("PRESET_AUTO_FILL_AUTO"), t("PRESET_AUTO_FILL_AUTO_DESC")),
+            ('MANUAL', t("PRESET_AUTO_FILL_MANUAL"), t("PRESET_AUTO_FILL_MANUAL_DESC")),
+        ],
+        default='AUTO',
+    )
+
     comp_name: bpy.props.StringProperty(
         name=t("COMP_NAME"),
         default=_DEFAULT_COMP_NAME_FULL,  # 三栏默认拼接值（DEFAULT_VALUES 原值保留，仅名称段被引用）
@@ -1536,15 +1558,17 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
                 #   key 不得参与组名/链接符的组合条件——key 栏恒有默认值，纳入会导致
                 #   回填永不触发（9.13.0 回归）
                 if comp_name and comp_name.strip() and comp_name not in PLACEHOLDER_COMP_NAMES:
-                    _COMP_NAME_SYNC = True  # 回填期间锁定联动，避免中间态串写
-                    try:
-                        if not self.name_group.strip() and not self.name_separator.strip():
-                            self.name_separator = _DEFAULT_NAME_SEPARATOR
-                            self.name_group = _DEFAULT_NAME_GROUP
-                        if not self.name_key.strip():
-                            self.name_key = _DEFAULT_COMP_KEY
-                    finally:
-                        _COMP_NAME_SYNC = False
+                    # 仅 AUTO 模式回填组名/连接符/key；MANUAL 模式保留用户已有值
+                    if self.preset_auto_fill_mode == 'AUTO':
+                        _COMP_NAME_SYNC = True  # 回填期间锁定联动，避免中间态串写
+                        try:
+                            if not self.name_group.strip() and not self.name_separator.strip():
+                                self.name_separator = _DEFAULT_NAME_SEPARATOR
+                                self.name_group = _DEFAULT_NAME_GROUP
+                            if not self.name_key.strip():
+                                self.name_key = _DEFAULT_COMP_KEY
+                        finally:
+                            _COMP_NAME_SYNC = False
                     base = comp_name.partition("-")[2] or comp_name
                     self.comp_name = f"{self.name_group}{self.name_separator}{self.name_key}{base}"  # 触发反向拆分，四栏同步
 
@@ -2369,7 +2393,8 @@ class COMPONENT_OT_placer(bpy.types.Operator):
         empty_obj.location = position
         empty_obj.rotation_euler = rotation
 
-        # 归入合适的集合（已建立 Connections 层级则归入对应类型集合，否则场景根）
+        # 新物体先放场景根目录，再调用统一整理函数归入合适集合（复用 _link_to_appropriate_collection）
+        context.scene.collection.objects.link(empty_obj)
         _link_to_appropriate_collection(empty_obj, "comp", settings)
 
         # 存储局部轴的世界方向信息用于平移（与旋转矩阵列向量一致）
@@ -2620,14 +2645,9 @@ class COMPONENT_OT_mirror_x(bpy.types.Operator):
             new_obj.rotation_mode = 'QUATERNION'  # 四元数镜像结果直接写入，避免欧拉转换误差
             new_obj.rotation_quaternion = mirrored_q
 
-            # 若已执行过"整理场景"，镜像副本自动归入对应 Connections 集合
-            mirror_comp_type = str(new_obj.get("x4_comp_name", ""))
-            mirror_group = _org_extract_group(mirror_name, settings.name_separator, settings.name_key)
-            target_col_name = _resolve_organize_collection(mirror_comp_type, mirror_group)
-            if target_col_name and target_col_name in bpy.data.collections:
-                bpy.data.collections[target_col_name].objects.link(new_obj)
-            else:
-                scene.collection.objects.link(new_obj)
+            # 镜像副本先放场景根目录，再调用统一整理函数归入合适集合（复用 _link_to_appropriate_collection）
+            scene.collection.objects.link(new_obj)
+            _link_to_appropriate_collection(new_obj, "comp", settings)
 
             # 存储轴向数据（镜像后重新计算的世界方向）
             new_obj["face_normal"] = tuple(rot_matrix.col[2])
@@ -3317,13 +3337,17 @@ def _resolve_organize_collection(comp_type, group_name=""):
 
 
 def _link_to_appropriate_collection(obj, role, settings=None):
-    """按物体角色把 obj link 到合适的集合（新建物体的统一入口）。
+    """按物体角色把 obj 移入合适的集合（新建物体的统一整理入口）。
+    link 前先从当前所有集合 unlink，保证物体只在一个集合里（与 _org_move_to_collection 语义一致）。
     - comp：归入 Connections 下对应类型集合（已存在则归入，否则场景根）
     - wp_origin / wp_child：归入 Waypoints（已存在则归入，否则场景根）
     - preview：跟随父级所在集合，否则当前活动集合
     - other：场景根
     航路导入的"子级跟随原点所在集合"由调用方用 prefer_collection 覆盖。"""
     scene = bpy.context.scene
+    # 先从当前所有集合移出，避免重复归属
+    for col in list(obj.users_collection):
+        col.objects.unlink(obj)
     if role == "comp" and settings is not None:
         target = _resolve_organize_collection(settings.name_base, settings.name_group)
         if target and target in bpy.data.collections:
@@ -4543,6 +4567,9 @@ class COMPONENT_FIXED_PT_placer_panel(bpy.types.Panel):
         row = box.row()
         row.label(text=t("PRESET_SELECTION") + ":")
         row.prop(settings, "preset_index", text="")
+
+        # 预设回填模式：控制切换预设时是否自动回填组名/连接符
+        box.prop(settings, "preset_auto_fill_mode", text=t("PRESET_AUTO_FILL_MODE"))
 
         # 应用选中组件设定：解构选中组件名称回填组名/组件名称
         box.operator("component_fixed.apply_selected_name",
