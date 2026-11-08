@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 69),  # 修复整理舰船网格名称冲突：重命名前先释放同名物体/mesh，避免 Blender 自动加 .001 后缀
+    "version": (9, 16, 70),  # 修复整理舰船网格材质 .001：part_main 材质重命名前释放同名、wreck 材质优先复用已有同名
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3560,7 +3560,12 @@ class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
         for i, mat in enumerate(original_obj.data.materials):
             if mat is None:
                 continue
-            mat.name = f"{prefix}{dot}{mat_base}_{chr(ord('a') + i)}"
+            target = f"{prefix}{dot}{mat_base}_{chr(ord('a') + i)}"
+            # 释放同名材质，避免 Blender 自动加 .001
+            for em in list(bpy.data.materials):
+                if em != mat and em.name == target:
+                    em.name = target + "_old"
+            mat.name = target
             part_main_materials.append(mat)
 
         col = context.collection
@@ -3597,7 +3602,10 @@ class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
                 # collision 不附材质，清空原有材质槽
                 new_obj.data.materials.clear()
             elif name == "part_main.wreck":
-                w_mat = bpy.data.materials.new(name=wreck_mat_name)
+                # 优先复用已有同名材质，避免新建时 Blender 自动加 .001
+                w_mat = bpy.data.materials.get(wreck_mat_name)
+                if w_mat is None:
+                    w_mat = bpy.data.materials.new(name=wreck_mat_name)
                 new_obj.data.materials.clear()
                 new_obj.data.materials.append(w_mat)
             else:
