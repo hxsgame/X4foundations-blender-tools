@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 67),  # 二轮工程清理：统一 is_wp_child 语义（含 tags 兜底）、make_waypoint 跳过组件硬点、清理局部 import、全局 flag 统一为 bool+global
+    "version": (9, 16, 68),  # 修复整理舰船网格材质命名：prefix 与 mat_base 之间补 . 分隔符（a.b_a 而非 ab_a）
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3505,7 +3505,7 @@ def _shipmesh_decimate(obj, ratio):
 
 
 class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
-    """将选中的 EVE 舰船网格整理为 X4 命名规范：重命名为 part_main，UV 层→uv1，材质按 {前缀}{材质名}_a/b/c 重命名，复制出 collision / LOD1 / LOD2 / LOD3 / wreck，LOD 与 wreck 可选按比例减面。"""
+    """将选中的 EVE 舰船网格整理为 X4 命名规范：重命名为 part_main，UV 层→uv1，材质按 {前缀}.{材质名}_a/b/c 重命名，复制出 collision / LOD1 / LOD2 / LOD3 / wreck，LOD 与 wreck 可选按比例减面。"""
     bl_idname = "component_fixed.organize_ship_mesh"
     bl_label = t("SHIP_MESH_ORGANIZE")
     bl_options = {'REGISTER', 'UNDO'}
@@ -3548,12 +3548,13 @@ class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
         original_obj.name = "part_main"
         original_obj.data.name = "part_main"
 
-        # 4. 重命名 part_main 的材质：{prefix}{mat_base}_a / _b / _c ...
+        # 4. 重命名 part_main 的材质：{prefix}.{mat_base}_a / _b / _c ...（prefix 为空时不加点）
         part_main_materials = []
+        dot = "." if prefix else ""
         for i, mat in enumerate(original_obj.data.materials):
             if mat is None:
                 continue
-            mat.name = f"{prefix}{mat_base}_{chr(ord('a') + i)}"
+            mat.name = f"{prefix}{dot}{mat_base}_{chr(ord('a') + i)}"
             part_main_materials.append(mat)
 
         col = context.collection
