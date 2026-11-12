@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 74),  # 第三批工程优化（L3/L4/L6/E5）：提取硬点类型/车道阈值/collision 常量；_save_scale_ego_dir 写失败加 warning
+    "version": (9, 16, 75),  # UI 文案：整理舰船网格面板改名为「网格规范器」
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -252,8 +252,8 @@ MULTI_LANGUAGE_TEXTS = {
         "ORGANIZE_SCENE_DESC": "把场景中带组件类型的硬点空物体按类型归入 Connections 集合层级（Engines/Turrets/Shields/Docks…，炮塔按组名建子集合），不动父子与变换",
         "ERROR_NO_HARDPOINTS_ORG": "场景中没有带 x4_comp_name 的硬点空物体可整理",
         "INFO_ORGANIZED": "已整理 {} 个硬点到 {} 个集合",
-        "SHIP_MESH_ORGANIZE": "整理舰船网格",
-        "SHIP_MESH_ORGANIZE_DESC": "将选中的 EVE 舰船网格整理为 X4 命名规范：重命名为 part_main，UV→uv1，复制出 collision/LOD1-3/wreck，支持按比例减面",
+        "SHIP_MESH_ORGANIZE": "网格规范器",
+        "SHIP_MESH_ORGANIZE_DESC": "将选中的 EVE 舰船网格规范为 X4 命名：重命名为 part_main，UV→uv1，复制出 collision/LOD1-3/wreck，支持按比例减面",
         "SHIP_MESH_PREFIX": "材质前缀",
         "SHIP_MESH_PREFIX_DESC": "材质名称前缀，留空则无前缀",
         "SHIP_MESH_MAT_NAME": "材质名称",
@@ -656,8 +656,8 @@ MULTI_LANGUAGE_TEXTS = {
         "ORGANIZE_SCENE_DESC": "Group hardpoint empties by component type into a Connections collection hierarchy (Engines/Turrets/Shields/Docks…, turrets get sub-collections by group). Does not touch parent or transforms.",
         "ERROR_NO_HARDPOINTS_ORG": "No hardpoint empties with x4_comp_name found in the scene",
         "INFO_ORGANIZED": "Organized {} hardpoints into {} collections",
-        "SHIP_MESH_ORGANIZE": "Organize Ship Mesh",
-        "SHIP_MESH_ORGANIZE_DESC": "Convert selected EVE ship mesh to X4 naming: rename to part_main, UV→uv1, spawn collision/LOD1-3/wreck, optional decimate",
+        "SHIP_MESH_ORGANIZE": "Mesh Normalizer",
+        "SHIP_MESH_ORGANIZE_DESC": "Normalize selected EVE ship mesh to X4 naming: rename to part_main, UV→uv1, spawn collision/LOD1-3/wreck, optional decimate",
         "SHIP_MESH_PREFIX": "Material Prefix",
         "SHIP_MESH_PREFIX_DESC": "Prefix for material names; leave empty for no prefix",
         "SHIP_MESH_MAT_NAME": "Material Name",
@@ -1586,7 +1586,7 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
         finally:
             self._applying_preset = False
 
-    # ===== 整理舰船网格（EVE→X4 命名规范） =====
+    # ===== 网格规范器（EVE→X4 命名规范） =====
     ship_mesh_prefix: bpy.props.StringProperty(
         name=t("SHIP_MESH_PREFIX"),
         default="",
@@ -3532,7 +3532,7 @@ def _shipmesh_decimate(obj, ratio):
 
 
 class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
-    """将选中的 EVE 舰船网格整理为 X4 命名规范：重命名为 part_main，UV 层→uv1，材质按 {前缀}.{材质名}_a/b/c 重命名，复制出 collision / LOD1 / LOD2 / LOD3 / wreck，LOD 与 wreck 可选按比例减面。"""
+    """将选中的 EVE 舰船网格规范为 X4 命名：重命名为 part_main，UV 层→uv1，材质按 {前缀}.{材质名}_a/b/c 重命名，复制出 collision / LOD1 / LOD2 / LOD3 / wreck，LOD 与 wreck 可选按比例减面。"""
     bl_idname = "component_fixed.organize_ship_mesh"
     bl_label = t("SHIP_MESH_ORGANIZE")
     bl_options = {'REGISTER', 'UNDO'}
@@ -4990,7 +4990,7 @@ def _restore_ego_dir_handler(dummy):
 
 
 class COMPONENT_FIXED_PT_ship_mesh_panel(bpy.types.Panel):
-    """整理舰船网格面板（第三个独立面板）"""
+    """网格规范器面板（第三个独立面板）"""
     bl_label = t("SHIP_MESH_ORGANIZE")
     bl_idname = "COMPONENT_FIXED_PT_ship_mesh_panel"
     bl_space_type = 'VIEW_3D'
