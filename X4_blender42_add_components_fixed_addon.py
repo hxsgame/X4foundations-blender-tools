@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 75),  # UI 文案：整理舰船网格面板改名为「网格规范器」
+    "version": (9, 16, 76),  # UI：面板标题「网格规范器」，按钮文字保持「整理选定舰船网格」
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -253,6 +253,7 @@ MULTI_LANGUAGE_TEXTS = {
         "ERROR_NO_HARDPOINTS_ORG": "场景中没有带 x4_comp_name 的硬点空物体可整理",
         "INFO_ORGANIZED": "已整理 {} 个硬点到 {} 个集合",
         "SHIP_MESH_ORGANIZE": "网格规范器",
+        "SHIP_MESH_ORGANIZE_BTN": "整理选定舰船网格",
         "SHIP_MESH_ORGANIZE_DESC": "将选中的 EVE 舰船网格规范为 X4 命名：重命名为 part_main，UV→uv1，复制出 collision/LOD1-3/wreck，支持按比例减面",
         "SHIP_MESH_PREFIX": "材质前缀",
         "SHIP_MESH_PREFIX_DESC": "材质名称前缀，留空则无前缀",
@@ -657,6 +658,7 @@ MULTI_LANGUAGE_TEXTS = {
         "ERROR_NO_HARDPOINTS_ORG": "No hardpoint empties with x4_comp_name found in the scene",
         "INFO_ORGANIZED": "Organized {} hardpoints into {} collections",
         "SHIP_MESH_ORGANIZE": "Mesh Normalizer",
+        "SHIP_MESH_ORGANIZE_BTN": "Organize Selected Ship Mesh",
         "SHIP_MESH_ORGANIZE_DESC": "Normalize selected EVE ship mesh to X4 naming: rename to part_main, UV→uv1, spawn collision/LOD1-3/wreck, optional decimate",
         "SHIP_MESH_PREFIX": "Material Prefix",
         "SHIP_MESH_PREFIX_DESC": "Prefix for material names; leave empty for no prefix",
@@ -3534,7 +3536,7 @@ def _shipmesh_decimate(obj, ratio):
 class COMPONENT_OT_organize_ship_mesh(bpy.types.Operator):
     """将选中的 EVE 舰船网格规范为 X4 命名：重命名为 part_main，UV 层→uv1，材质按 {前缀}.{材质名}_a/b/c 重命名，复制出 collision / LOD1 / LOD2 / LOD3 / wreck，LOD 与 wreck 可选按比例减面。"""
     bl_idname = "component_fixed.organize_ship_mesh"
-    bl_label = t("SHIP_MESH_ORGANIZE")
+    bl_label = t("SHIP_MESH_ORGANIZE_BTN")
     bl_options = {'REGISTER', 'UNDO'}
 
     _SHIP_MESH_TAG = "x4_ship_mesh_organized"
@@ -5021,7 +5023,7 @@ class COMPONENT_FIXED_PT_ship_mesh_panel(bpy.types.Panel):
         if settings.ship_mesh_wreck_mode == 'DECIMATE':
             box.prop(settings, "ship_mesh_wreck_ratio")
 
-        box.operator("component_fixed.organize_ship_mesh", text=t("SHIP_MESH_ORGANIZE"), icon='MESH_DATA')
+        box.operator("component_fixed.organize_ship_mesh", text=t("SHIP_MESH_ORGANIZE_BTN"), icon='MESH_DATA')
 
 
 class COMPONENT_OT_scale_save_blend(bpy.types.Operator):
