@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 73),  # 审查清理：add_waypoint 也先放场景根再整理；删除 rotate_local/quick_rotate 冗余局部 import math/Matrix
+    "version": (9, 16, 74),  # 第三批工程优化（L3/L4/L6/E5）：提取硬点类型/车道阈值/collision 常量；_save_scale_ego_dir 写失败加 warning
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -147,6 +147,16 @@ COMPONENT_PRESETS = [
 
 # 占位组件名：这些值只用于内部标记，不应写入 comp_name（如"自定义"预设）
 PLACEHOLDER_COMP_NAMES = {"customize"}
+
+# 硬点类型常量（导入/导出/判定共用，避免字面量散落）
+_HP_TYPE_WAYPOINT = "waypoint"
+_HP_TYPE_DOCKINGBAY = "dockingbay"
+
+# 航路车道四元数阈值（原版规律：qy≈±1=出站道，qw≈±1=进站道）
+_WP_LANE_Q_THRESHOLD = 0.9
+
+# 舰船网格整理：含此关键字的网格归入 Collisions 集合
+_COLLISION_NAME_HINT = "collision"
 
 def _build_preset_items():
     """生成过滤后的预设列表（注册时静态生成；动态回调在部分 4.2 环境注册失败）"""
@@ -1118,8 +1128,8 @@ def _save_scale_ego_dir(path):
     try:
         with open(p, "w", encoding="utf-8") as f:
             json.dump({"ego_dir": str(path)}, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[X4] 警告: 保存 ego 路径失败: {e}")
 
 
 _scale_ego_updating = False  # ego 路径 update 回调的递归保护（与 _spacing_updating 统一为 bool）
@@ -2937,7 +2947,7 @@ def is_wp_child(obj):
     """航路子级（waypoint / dockingbay）。
     识别优先级：hardpoint_type ∈ {waypoint, dockingbay} → 有 tags 属性（老数据兜底）。
     这是航路子级的唯一判定入口，与导出收集、clear-existing、场景整理语义一致。"""
-    return obj.get("hardpoint_type") in ("waypoint", "dockingbay") or obj.get("tags") is not None
+    return obj.get("hardpoint_type") in (_HP_TYPE_WAYPOINT, _HP_TYPE_DOCKINGBAY) or obj.get("tags") is not None
 
 
 def is_preview(obj):
@@ -3476,7 +3486,7 @@ class COMPONENT_OT_organize_scene(bpy.types.Operator):
         # —— 网格物体：含 collision → Collisions；否则 → Mesh ——
         for obj in meshes:
             name_l = obj.name.lower()
-            if "collision" in name_l:
+            if _COLLISION_NAME_HINT in name_l:
                 target_name = "Collisions"
             else:
                 target_name = "Mesh"
@@ -3865,9 +3875,9 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
             # 车道朝向：按 XML 四元数推断（原版规律：qy≈±1 绕竖直轴 180° = 出站道，qw≈±1 恒等 = 进站道）
             qy = float(wp.get("qy", 0))
             qw = float(wp.get("qw", 1))
-            if abs(qy) > 0.9 and abs(qw) < 0.1:
+            if abs(qy) > _WP_LANE_Q_THRESHOLD and abs(qw) < (1 - _WP_LANE_Q_THRESHOLD):
                 obj["lane"] = "outbound"
-            elif abs(qw) > 0.9:
+            elif abs(qw) > _WP_LANE_Q_THRESHOLD:
                 obj["lane"] = "inbound"
 
             waypoint_objects[name] = obj
@@ -4079,7 +4089,7 @@ class COMPONENT_OT_make_waypoint(bpy.types.Operator):
             if "group" not in obj:
                 obj["group"] = ""
             if "hardpoint_type" not in obj:
-                obj["hardpoint_type"] = "waypoint"
+                obj["hardpoint_type"] = _HP_TYPE_WAYPOINT
             if "lane" not in obj:
                 obj["lane"] = "inbound"
             _sync_wp_tag_props(obj)
@@ -4173,7 +4183,7 @@ class COMPONENT_OT_add_waypoint(bpy.types.Operator):
         obj["tags"] = "dockpath"
         obj["links"] = ""
         obj["group"] = group
-        obj["hardpoint_type"] = "waypoint"
+        obj["hardpoint_type"] = _HP_TYPE_WAYPOINT
         obj["lane"] = "inbound"  # 车道朝向：默认进站道（恒等），出站道导出时转 180°
         _sync_wp_tag_props(obj)
         _apply_wp_display_type(obj)
@@ -4277,24 +4287,24 @@ class COMPONENT_OT_rebuild_wp_constraints(bpy.types.Operator):
 def _detect_hp_type(obj):
     """硬点类型：自定义属性 hardpoint_type → 名称含 dockingbay/waypoint → waypoint"""
     hp = str(obj.get("hardpoint_type") or "").strip().lower()
-    if hp in ("dockingbay", "waypoint"):
+    if hp in (_HP_TYPE_DOCKINGBAY, _HP_TYPE_WAYPOINT):
         return hp
     nl = obj.name.lower()
-    if "dockingbay" in nl:
-        return "dockingbay"
-    if "waypoint" in nl:
-        return "waypoint"
-    return "waypoint"
+    if _HP_TYPE_DOCKINGBAY in nl:
+        return _HP_TYPE_DOCKINGBAY
+    if _HP_TYPE_WAYPOINT in nl:
+        return _HP_TYPE_WAYPOINT
+    return _HP_TYPE_WAYPOINT
 
 
 def _detect_hp_type_from_name(name, fallback):
     """从 XML/字符串名称预判硬点类型：含 dockingbay→dockingbay，含 waypoint→waypoint，否则 fallback。
     用于导入时在物体创建前从 XML name 判定；物体创建后用 _detect_hp_type(obj)。"""
     nl = name.lower()
-    if "dockingbay" in nl:
-        return "dockingbay"
-    if "waypoint" in nl:
-        return "waypoint"
+    if _HP_TYPE_DOCKINGBAY in nl:
+        return _HP_TYPE_DOCKINGBAY
+    if _HP_TYPE_WAYPOINT in nl:
+        return _HP_TYPE_WAYPOINT
     return fallback
 
 
@@ -4345,13 +4355,13 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
         # wps 元组：(hp_type, export_name, group, tags_str, links_list, pos_rot)
         # 校验只针对 waypoint 类型；dockingbay 只校验 name/group 不含连接符（冲突时报错由用户处理）
         # 链接目标：在导出范围内 → 正常；在场景中存在但未导出 → 警告；场景中不存在 → 错误
-        wp_entries = [w for w in wps if w[0] == "waypoint"]
+        wp_entries = [w for w in wps if w[0] == _HP_TYPE_WAYPOINT]
         names = [w[1] for w in wp_entries]
         name_set = set()
         errors, warnings = [], []
 
         for hp_type, name, group, _tags, _links, _pos in wps:
-            if hp_type == "dockingbay" and (sep in name or sep in group):
+            if hp_type == _HP_TYPE_DOCKINGBAY and (sep in name or sep in group):
                 errors.append(t("WP_EXPORT_ERR_DASH3", name, sep))
 
         for n in names:
@@ -4402,7 +4412,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
 
         # 组对应检查：waypoint 的组名集合与 dockingbay 的组名集合应一一对应，否则警告（不阻断输出）
         wp_groups = {w[2] for w in wp_entries if w[2]}
-        dock_groups = {w[2] for w in wps if w[0] == "dockingbay" and w[2]}
+        dock_groups = {w[2] for w in wps if w[0] == _HP_TYPE_DOCKINGBAY and w[2]}
         for g in sorted(wp_groups - dock_groups):
             warnings.append(t("WP_EXPORT_WARN_GROUP_NO_DOCK", g))
         for g in sorted(dock_groups - wp_groups):
@@ -4430,7 +4440,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
             )
         lines.append("</waypoints>")
         # dockingbay 类型：输出到 <connections> 段，只含 name/group，供后续工具定位并更新 group 值
-        docks = [(name, group) for hp_type, name, group, _t, _l, _p in wps if hp_type == "dockingbay"]
+        docks = [(name, group) for hp_type, name, group, _t, _l, _p in wps if hp_type == _HP_TYPE_DOCKINGBAY]
         if docks:
             lines.append("<connections>")
             for name, group in docks:
@@ -4473,7 +4483,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
                 continue
             hp = _detect_hp_type(o)
             _, b = wp_name_split(o.name, sep)
-            if hp == "waypoint":
+            if hp == _HP_TYPE_WAYPOINT:
                 b = b.replace(sep, "_")
                 scene_wp_names.add(b)
             scene_map[o.name] = b
@@ -4487,7 +4497,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
             group_raw, base_raw = wp_name_split(o.name, sep)
             # 旧文件兼容：waypoint 的 group/name 残留连接符自动替换为 _；
             # dockingbay 保持原样，由 _validate 报错让用户处理
-            if hp_type == "waypoint":
+            if hp_type == _HP_TYPE_WAYPOINT:
                 group = group_raw.replace(sep, "_")
                 base = base_raw.replace(sep, "_")
             else:
@@ -4522,8 +4532,8 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
 
-        n_wp = sum(1 for w in wps if w[0] == "waypoint")
-        n_db = sum(1 for w in wps if w[0] == "dockingbay")
+        n_wp = sum(1 for w in wps if w[0] == _HP_TYPE_WAYPOINT)
+        n_db = sum(1 for w in wps if w[0] == _HP_TYPE_DOCKINGBAY)
         self.report({'INFO'}, t("WP_EXPORT_DONE", n_wp, n_db, len(warnings), export_path))
         return {'FINISHED'}
 
