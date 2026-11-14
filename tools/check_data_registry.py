@@ -98,6 +98,37 @@ def anonymous_scene_props(text: str):
     return hits
 
 
+def line_ref_drift(md_text: str, plugin_text: str, xmltool_text: str):
+    """校验注册表中的行号引用是否仍指向含该标识符的行。
+
+    返回 (检查数, 失配列表)。失配仅告警，不判失败——符号名才是主索引。
+    """
+    src = plugin_text.splitlines() + xmltool_text.splitlines()
+    skip = {"x4_preview_of", "x4_ship_mesh_organized"}  # 经常量间接引用
+    checked, bad = 0, []
+    for line in md_text.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        m = re.fullmatch(r"`([A-Za-z_][A-Za-z0-9_]*)`", cells[0])
+        if not m or m.group(1) in skip:
+            continue
+        name = m.group(1)
+        nums = []
+        for c in cells[1:]:
+            nums += [int(x) for x in re.findall(r"`(\d{2,4})`", c)]
+        for n in nums:
+            if n < 1 or n > len(src):
+                bad.append((name, n, "越界"))
+                continue
+            checked += 1
+            if name not in src[n - 1]:
+                bad.append((name, n, src[n - 1].strip()[:50]))
+    return checked, bad
+
+
 def report(title: str, missing: dict) -> int:
     if not missing:
         print(f"[PASS] {title}")
@@ -153,6 +184,14 @@ def main() -> int:
             print(f"       - line {lineno}: {line}")
     else:
         print("[PASS] 无匿名场景/窗口属性")
+
+    checked, drift = line_ref_drift(load_text(REGISTRY), plugin, xmltool)
+    if drift:
+        print(f"[WARN] 行号引用 {checked} 处中 {len(drift)} 处已漂移（建议按符号名复核注册表）")
+        for name, n, ctx in drift[:5]:
+            print(f"       - {name} @ {n}: {ctx}")
+    else:
+        print(f"[PASS] 行号引用 {checked} 处全部有效")
 
     print("-" * 56)
     if failures:

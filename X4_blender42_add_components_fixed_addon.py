@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 76),  # UI：面板标题「网格规范器」，按钮文字保持「整理选定舰船网格」
+    "version": (9, 16, 77),  # i18n：补齐 MOVE_Z_DESC（中英），修复 Z 轴平移提示显示键名
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -475,6 +475,7 @@ MULTI_LANGUAGE_TEXTS = {
         "MOVE_Y": "Y",
         "MOVE_Y_DESC": "沿物体局部Y轴平移量",
         "MOVE_Z": "Z",
+        "MOVE_Z_DESC": "沿物体局部Z轴平移量",
         "ERROR_NO_HARDPOINT": "选中的物体中没有硬点（组件）",
 
         # 航路点导入
@@ -880,6 +881,7 @@ MULTI_LANGUAGE_TEXTS = {
         "MOVE_Y": "Y",
         "MOVE_Y_DESC": "Translation along object's local Y axis",
         "MOVE_Z": "Z",
+        "MOVE_Z_DESC": "Translation along object's local Z axis",
         "ERROR_NO_HARDPOINT": "No hardpoints (components) in the selection",
 
         # Waypoint import
