@@ -6,6 +6,7 @@ import os
 import re
 import numpy as np
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as _xml_escape
 from mathutils import Vector, Matrix, Quaternion
 
 # ============================ v9.1 修复说明 ============================
@@ -60,7 +61,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 79),  # 导入兼容：单根 <waypoints> 与双根片段（导出格式）均可解析
+    "version": (9, 16, 81),  # 导出属性值转义：名称/组名含 & < > " 时不再产出非法 XML
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -3791,6 +3792,35 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
                 self.report({'ERROR'}, t("WP_IMPORT_ERR_DASH3", n, sep))
             return {'CANCELLED'}
 
+        # 数值属性预校验：非法值在动场景前整体终止，避免导入半截数据
+        num_errors = []
+        _num_attrs = ("x", "y", "z", "qy", "qw")
+        for wp in waypoints:
+            for attr in _num_attrs:
+                val = wp.get(attr)
+                if val is None:
+                    continue
+                try:
+                    float(val)
+                except ValueError:
+                    num_errors.append(f"{wp.get('name', '?')}@{attr}: not a number ({val!r})")
+        for conn in dockingbay_connections:
+            position_elem = conn.find("offset/position")
+            if position_elem is None:
+                continue
+            for attr in ("x", "y", "z"):
+                val = position_elem.get(attr)
+                if val is None:
+                    continue
+                try:
+                    float(val)
+                except ValueError:
+                    num_errors.append(f"{conn.get('name', '?')}@offset/{attr}: not a number ({val!r})")
+        if num_errors:
+            for msg in num_errors:
+                self.report({'ERROR'}, t("WP_ERROR_XML", msg))
+            return {'CANCELLED'}
+
         # 清除已有航路物体：按标记属性删除（x4_wp_origin 原点 + hardpoint_type 子级），
         # 不再按名称前缀匹配（子对象名来自 XML，不一定含 "waypoint"）。
         # 保留用户通过 wp_origin_empty 指定的原点，只清其子级。
@@ -4440,19 +4470,23 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
 
     @staticmethod
     def _build_xml(wps):
+        def _attr(value):
+            """XML 属性转义：名称/组名可能含 & < > " 等字符。"""
+            return _xml_escape(str(value), {'"': "&quot;"})
+
         lines = ['<?xml version="1.0" encoding="utf-8"?>', "<waypoints>"]
         # waypoint 类型：完整属性输出
         for hp_type, name, group, tags_str, links_list, pos_rot in wps:
             if hp_type != _HP_TYPE_WAYPOINT:
                 continue
             x, y, z, qx, qy, qz, qw = pos_rot
-            group_attr = f' group="{group}"' if group else ""
+            group_attr = f' group="{_attr(group)}"' if group else ""
             links_xml = ""
             if links_list:
-                links_inner = "".join(f'<link ref="{ln}"/>' for ln in links_list)
+                links_inner = "".join(f'<link ref="{_attr(ln)}"/>' for ln in links_list)
                 links_xml = f"\n    <links>{links_inner}</links>"
             lines.append(
-                f'  <waypoint name="{name}" tags="{tags_str}"{group_attr} '
+                f'  <waypoint name="{_attr(name)}" tags="{_attr(tags_str)}"{group_attr} '
                 f'x="{_wp_fmt(x)}" y="{_wp_fmt(y)}" z="{_wp_fmt(z)}" '
                 f'qx="{_wp_fmt(qx)}" qy="{_wp_fmt(qy)}" qz="{_wp_fmt(qz)}" qw="{_wp_fmt(qw)}">{links_xml}\n  </waypoint>'
             )
@@ -4462,8 +4496,8 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
         if docks:
             lines.append("<connections>")
             for name, group in docks:
-                group_attr = f' group="{group}"' if group else ""
-                lines.append(f'  <connection name="{name}"{group_attr}/>')
+                group_attr = f' group="{_attr(group)}"' if group else ""
+                lines.append(f'  <connection name="{_attr(name)}"{group_attr}/>')
             lines.append("</connections>")
         return "\n".join(lines)
 
