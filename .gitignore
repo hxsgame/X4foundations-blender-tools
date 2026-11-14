@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 release/
 X4Foundations_Blender_Tools_v*.zip
+X4foundations_Ship_Builder_*.zip
 backup_to_D.ps1
 维护日志.md
 backups/
