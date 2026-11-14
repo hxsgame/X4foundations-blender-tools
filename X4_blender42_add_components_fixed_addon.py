@@ -60,7 +60,7 @@ def get_supported_language():
 
 bl_info = {
     "name": "智能组件放置器-修正版(独立)",
-    "version": (9, 16, 77),  # i18n：补齐 MOVE_Z_DESC（中英），修复 Z 轴平移提示显示键名
+    "version": (9, 16, 79),  # 导入兼容：单根 <waypoints> 与双根片段（导出格式）均可解析
     "blender": (4, 2, 0),
     "location": "View3D > UI > 组件放置",
     "description": "使用几何算法精确计算长边方向的组件放置器，支持预设组件",
@@ -1357,8 +1357,8 @@ class ComponentSettingsFixed(bpy.types.PropertyGroup):
 
     wp_default_hp_type: bpy.props.EnumProperty(
         name=t("WP_DEFAULT_HP_TYPE"),
-        items=[("waypoint", "waypoint", ""), ("dockingbay", "dockingbay", "")],
-        default="waypoint",
+        items=[(_HP_TYPE_WAYPOINT, _HP_TYPE_WAYPOINT, ""), (_HP_TYPE_DOCKINGBAY, _HP_TYPE_DOCKINGBAY, "")],
+        default=_HP_TYPE_WAYPOINT,
         description=t("WP_DEFAULT_HP_TYPE_DESC")
     )
 
@@ -3745,6 +3745,52 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
         m_height = settings.wp_m_height
         default_size = settings.wp_default_size
 
+        # 先解析 XML 再动场景：解析失败时不能已删除既有航路/已创建原点（防数据丢失）
+        # 兼容单根文档与「waypoints + connections 双根片段」（本插件导出格式，
+        # 片段不是合法 XML 文档，先包一层合成根再解析）
+        try:
+            root = ET.parse(xml_path).getroot()
+        except ET.ParseError:
+            try:
+                with open(xml_path, "rb") as f:
+                    raw = f.read().decode("utf-8-sig")
+                body = raw.split("?>", 1)[1] if "?>" in raw[:200] else raw
+                root = ET.fromstring(f"<x4_fragment>{body}</x4_fragment>")
+            except Exception as e:
+                self.report({'ERROR'}, t("WP_ERROR_XML", str(e)))
+                return {'CANCELLED'}
+        except Exception as e:
+            self.report({'ERROR'}, t("WP_ERROR_XML", str(e)))
+            return {'CANCELLED'}
+
+        def _section(tag):
+            """取 XML 段：根节点本身即该段时直接返回，否则在子树中查找。"""
+            return root if root.tag == tag else root.find(".//" + tag)
+
+        # 获取 waypoints
+        waypoints_elem = _section("waypoints")
+        waypoints = waypoints_elem.findall("waypoint") if waypoints_elem is not None else []
+
+        # 获取 dockingbay connections
+        dockingbay_connections = []
+        connections_elem = _section("connections")
+        if connections_elem is not None:
+            for conn in connections_elem.findall("connection"):
+                if _HP_TYPE_DOCKINGBAY in conn.get("tags", ""):
+                    dockingbay_connections.append(conn)
+
+        # 连接符全局设置：本操作符内所有命名/冲突检查/兼容替换均以此为准（空则回退 ---）
+        sep = settings.wp_name_separator or "---"
+
+        # dockingbay 名称/组名含连接符序列：报错提示并中止，由用户先改 XML
+        # （waypoint 的冲突序列在创建时自动替换为 '_'，见下）
+        dash3_errors = [c.get("name", "dockingbay") for c in dockingbay_connections
+                        if sep in c.get("name", "") or sep in c.get("group", "")]
+        if dash3_errors:
+            for n in dash3_errors:
+                self.report({'ERROR'}, t("WP_IMPORT_ERR_DASH3", n, sep))
+            return {'CANCELLED'}
+
         # 清除已有航路物体：按标记属性删除（x4_wp_origin 原点 + hardpoint_type 子级），
         # 不再按名称前缀匹配（子对象名来自 XML，不一定含 "waypoint"）。
         # 保留用户通过 wp_origin_empty 指定的原点，只清其子级。
@@ -3774,38 +3820,6 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
         # 若原点未 link 到任何集合，则用场景根集合。
         origin_cols = origin.users_collection
         wp_target_col = origin_cols[0] if origin_cols else context.scene.collection
-
-        # 加载 XML
-        try:
-            tree = ET.parse(xml_path)
-            root = tree.getroot()
-        except Exception as e:
-            self.report({'ERROR'}, t("WP_ERROR_XML", str(e)))
-            return {'CANCELLED'}
-
-        # 获取 waypoints
-        waypoints_elem = root.find(".//waypoints")
-        waypoints = waypoints_elem.findall("waypoint") if waypoints_elem is not None else []
-
-        # 获取 dockingbay connections
-        dockingbay_connections = []
-        connections_elem = root.find(".//connections")
-        if connections_elem is not None:
-            for conn in connections_elem.findall("connection"):
-                if "dockingbay" in conn.get("tags", ""):
-                    dockingbay_connections.append(conn)
-
-        # 连接符全局设置：本操作符内所有命名/冲突检查/兼容替换均以此为准（空则回退 ---）
-        sep = settings.wp_name_separator or "---"
-
-        # dockingbay 名称/组名含连接符序列：报错提示并中止，由用户先改 XML
-        # （waypoint 的冲突序列在创建时自动替换为 '_'，见下）
-        dash3_errors = [c.get("name", "dockingbay") for c in dockingbay_connections
-                        if sep in c.get("name", "") or sep in c.get("group", "")]
-        if dash3_errors:
-            for n in dash3_errors:
-                self.report({'ERROR'}, t("WP_IMPORT_ERR_DASH3", n, sep))
-            return {'CANCELLED'}
 
         # 坐标转换用模块级 x4_to_blender_pos
 
@@ -3935,7 +3949,7 @@ class COMPONENT_OT_import_waypoints(bpy.types.Operator):
                 if tag:
                     obj[tag] = True
             # dockingbay 只记类型与组名（模型相关，不修改名称和数量，后续只更新 group）
-            obj["hardpoint_type"] = _detect_hp_type_from_name(name, "dockingbay")
+            obj["hardpoint_type"] = _detect_hp_type_from_name(name, _HP_TYPE_DOCKINGBAY)
             obj["group"] = group
 
         # 官方 ego 方式：物体旋转保持 0；对每个 link 创建一个 Track To 约束（追踪轴 Y，向上 X）
@@ -4429,7 +4443,7 @@ class COMPONENT_OT_export_waypoints(bpy.types.Operator):
         lines = ['<?xml version="1.0" encoding="utf-8"?>', "<waypoints>"]
         # waypoint 类型：完整属性输出
         for hp_type, name, group, tags_str, links_list, pos_rot in wps:
-            if hp_type != "waypoint":
+            if hp_type != _HP_TYPE_WAYPOINT:
                 continue
             x, y, z, qx, qy, qz, qw = pos_rot
             group_attr = f' group="{group}"' if group else ""
